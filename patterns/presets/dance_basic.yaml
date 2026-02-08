@@ -1,0 +1,34 @@
+name: "dance_basic"
+version: 1
+defaults:
+  motor_port: "A"
+  stop_action: "brake"
+steps:
+  - type: "run_for_time"
+    velocity: 0.70
+    duration_sec: 0.25
+  - type: "sleep"
+    duration_sec: 0.10
+  - type: "run_for_time"
+    velocity: -0.70
+    duration_sec: 0.25
+  - type: "sleep"
+    duration_sec: 0.10
+  - type: "run_for_degrees"
+    velocity: 0.50
+    degrees: 180
+    stop_action: "hold"
+  - type: "sleep"
+    duration_sec: 0.10
+  - type: "run_for_degrees"
+    velocity: -0.50
+    degrees: 180
+    stop_action: "hold"
+  - type: "sleep"
+    duration_sec: 0.10
+  - type: "run_for_time"
+    velocity: 1.00
+    duration_sec: 0.15
+  - type: "run_for_time"
+    velocity: -1.00
+    duration_sec: 0.15

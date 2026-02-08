@@ -1,0 +1,24 @@
+name: "sweep_3s"
+version: 1
+defaults:
+  motor_port: "A"
+  stop_action: "coast"
+steps:
+  - type: "run_for_time"
+    velocity: -0.80
+    duration_sec: 0.50
+  - type: "run_for_time"
+    velocity: -0.40
+    duration_sec: 0.50
+  - type: "run_for_time"
+    velocity: 0.00
+    duration_sec: 0.50
+  - type: "run_for_time"
+    velocity: 0.40
+    duration_sec: 0.50
+  - type: "run_for_time"
+    velocity: 0.80
+    duration_sec: 0.50
+  - type: "run_for_time"
+    velocity: 0.00
+    duration_sec: 0.50

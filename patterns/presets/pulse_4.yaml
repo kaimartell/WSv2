@@ -1,0 +1,24 @@
+name: "pulse_4"
+version: 1
+defaults:
+  motor_port: "A"
+  stop_action: "coast"
+steps:
+  - type: "run_for_time"
+    velocity: 0.60
+    duration_sec: 0.30
+  - type: "sleep"
+    duration_sec: 0.20
+  - type: "run_for_time"
+    velocity: 0.60
+    duration_sec: 0.30
+  - type: "sleep"
+    duration_sec: 0.20
+  - type: "run_for_time"
+    velocity: 0.60
+    duration_sec: 0.30
+  - type: "sleep"
+    duration_sec: 0.20
+  - type: "run_for_time"
+    velocity: 0.60
+    duration_sec: 0.30

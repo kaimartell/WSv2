@@ -32,28 +32,199 @@ class HostAgentHttpClient:
         with self._lock:
             return self._last_health_latency_ms
 
-    def run_motor(self, speed: float, duration: float) -> Dict[str, Any]:
-        response, _meta = self.run_motor_with_meta(speed=speed, duration=duration)
+    def run_motor(
+        self,
+        speed: float,
+        duration: float,
+        *,
+        port: str = "",
+        timeout_sec: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        response, _meta = self.run_motor_with_meta(
+            speed=speed,
+            duration=duration,
+            port=port,
+            timeout_sec=timeout_sec,
+        )
         return response
 
-    def run_motor_with_meta(self, speed: float, duration: float) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        payload = {"speed": float(speed), "duration": max(0.0, float(duration))}
-        response, meta = self._request("POST", "/motor/run", payload)
-        self._record_error(meta.get("error", ""))
-        if response is None:
-            return {"accepted": False, "error": meta.get("error", "unreachable")}, meta
-        return response, meta
+    def run_motor_with_meta(
+        self,
+        speed: float,
+        duration: float,
+        *,
+        port: str = "",
+        timeout_sec: Optional[float] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        payload: Dict[str, Any] = {
+            "speed": float(speed),
+            "duration": max(0.0, float(duration)),
+        }
+        normalized_port = str(port or "").strip().upper()
+        if normalized_port:
+            payload["port"] = normalized_port
+        return self._post_with_meta(
+            "/motor/run",
+            payload,
+            default_failure={"accepted": False},
+            timeout_sec=timeout_sec,
+        )
 
-    def stop_motor(self) -> Dict[str, Any]:
-        response, _meta = self.stop_motor_with_meta()
+    def stop_motor(
+        self,
+        *,
+        port: str = "",
+        stop_action: str = "",
+        timeout_sec: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        response, _meta = self.stop_motor_with_meta(
+            port=port,
+            stop_action=stop_action,
+            timeout_sec=timeout_sec,
+        )
         return response
 
-    def stop_motor_with_meta(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        response, meta = self._request("POST", "/motor/stop", {})
-        self._record_error(meta.get("error", ""))
-        if response is None:
-            return {"stopped": False, "error": meta.get("error", "unreachable")}, meta
-        return response, meta
+    def stop_motor_with_meta(
+        self,
+        *,
+        port: str = "",
+        stop_action: str = "",
+        timeout_sec: Optional[float] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        payload: Dict[str, Any] = {}
+        normalized_port = str(port or "").strip().upper()
+        if normalized_port:
+            payload["port"] = normalized_port
+        normalized_stop_action = str(stop_action or "").strip().lower()
+        if normalized_stop_action:
+            payload["stop_action"] = normalized_stop_action
+        return self._post_with_meta(
+            "/motor/stop",
+            payload,
+            default_failure={"stopped": False},
+            timeout_sec=timeout_sec,
+        )
+
+    def run_for_degrees_with_meta(
+        self,
+        *,
+        port: str,
+        speed: float,
+        degrees: int,
+        stop_action: str = "",
+        timeout_sec: Optional[float] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        payload: Dict[str, Any] = {
+            "port": str(port).strip().upper(),
+            "speed": float(speed),
+            "degrees": int(degrees),
+        }
+        normalized_stop_action = str(stop_action or "").strip().lower()
+        if normalized_stop_action:
+            payload["stop_action"] = normalized_stop_action
+        return self._post_with_meta(
+            "/motor/run_for_degrees",
+            payload,
+            default_failure={"accepted": False},
+            timeout_sec=timeout_sec,
+        )
+
+    def run_to_absolute_with_meta(
+        self,
+        *,
+        port: str,
+        speed: float,
+        position_degrees: int,
+        stop_action: str = "",
+        timeout_sec: Optional[float] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        payload: Dict[str, Any] = {
+            "port": str(port).strip().upper(),
+            "speed": float(speed),
+            "position_degrees": int(position_degrees),
+        }
+        normalized_stop_action = str(stop_action or "").strip().lower()
+        if normalized_stop_action:
+            payload["stop_action"] = normalized_stop_action
+        return self._post_with_meta(
+            "/motor/run_to_absolute",
+            payload,
+            default_failure={"accepted": False},
+            timeout_sec=timeout_sec,
+        )
+
+    def run_to_relative_with_meta(
+        self,
+        *,
+        port: str,
+        speed: float,
+        degrees: int,
+        stop_action: str = "",
+        timeout_sec: Optional[float] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        payload: Dict[str, Any] = {
+            "port": str(port).strip().upper(),
+            "speed": float(speed),
+            "degrees": int(degrees),
+        }
+        normalized_stop_action = str(stop_action or "").strip().lower()
+        if normalized_stop_action:
+            payload["stop_action"] = normalized_stop_action
+        return self._post_with_meta(
+            "/motor/run_to_relative",
+            payload,
+            default_failure={"accepted": False},
+            timeout_sec=timeout_sec,
+        )
+
+    def reset_relative_with_meta(
+        self,
+        *,
+        port: str,
+        timeout_sec: Optional[float] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        payload = {"port": str(port).strip().upper()}
+        return self._post_with_meta(
+            "/motor/reset_relative",
+            payload,
+            default_failure={"accepted": False},
+            timeout_sec=timeout_sec,
+        )
+
+    def set_duty_cycle_with_meta(
+        self,
+        *,
+        port: str,
+        speed: float,
+        timeout_sec: Optional[float] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        payload = {
+            "port": str(port).strip().upper(),
+            "speed": float(speed),
+        }
+        return self._post_with_meta(
+            "/motor/set_duty_cycle",
+            payload,
+            default_failure={"accepted": False},
+            timeout_sec=timeout_sec,
+        )
+
+    def get_motor_status_with_meta(
+        self,
+        *,
+        port: str = "",
+        timeout_sec: Optional[float] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        payload: Dict[str, Any] = {}
+        normalized_port = str(port or "").strip().upper()
+        if normalized_port:
+            payload["port"] = normalized_port
+        return self._post_with_meta(
+            "/motor/status",
+            payload,
+            default_failure={"ok": False},
+            timeout_sec=timeout_sec,
+        )
 
     def get_state(self) -> Dict[str, Any]:
         response, _meta = self.get_state_with_meta()
@@ -79,12 +250,33 @@ class HostAgentHttpClient:
             return {"ok": False, "backend": "unreachable", "spike_connected": False}, meta
         return response, meta
 
+    def _post_with_meta(
+        self,
+        path: str,
+        payload: Dict[str, Any],
+        *,
+        default_failure: Dict[str, Any],
+        timeout_sec: Optional[float] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        response, meta = self._request("POST", path, payload, timeout_sec=timeout_sec)
+        self._record_error(meta.get("error", ""))
+        if response is None:
+            result = dict(default_failure)
+            result["error"] = meta.get("error", "unreachable")
+            return result, meta
+        return response, meta
+
     def _record_error(self, message: str) -> None:
         with self._lock:
             self._last_error = str(message or "")
 
     def _request(
-        self, method: str, path: str, payload: Optional[Dict[str, Any]]
+        self,
+        method: str,
+        path: str,
+        payload: Optional[Dict[str, Any]],
+        *,
+        timeout_sec: Optional[float] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
         start = time.perf_counter()
         url = f"{self._base_url}{path}"
@@ -96,8 +288,10 @@ class HostAgentHttpClient:
             body = json.dumps(payload).encode("utf-8")
 
         req = request.Request(url=url, data=body, method=method, headers=headers)
+        timeout = self._timeout if timeout_sec is None else max(0.1, float(timeout_sec))
+
         try:
-            with request.urlopen(req, timeout=self._timeout) as resp:
+            with request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read().decode("utf-8")
             meta = {
                 "ok": True,

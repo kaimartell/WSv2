@@ -40,6 +40,7 @@ RUN rosdep update
 
 WORKDIR /ros2_ws
 COPY ros2_ws/src /ros2_ws/src
+COPY patterns /patterns
 
 RUN source /opt/ros/${ROS_DISTRO}/setup.bash \
     && rosdep install --from-paths src --ignore-src -r -y \

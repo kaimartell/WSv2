@@ -1,0 +1,29 @@
+name: "bounce_encoder"
+version: 1
+defaults:
+  motor_port: "A"
+  stop_action: "hold"
+steps:
+  - type: "reset_relative_position"
+  - type: "run_to_relative_position"
+    velocity: 0.45
+    degrees: 120
+    stop_action: "hold"
+  - type: "sleep"
+    duration_sec: 0.15
+  - type: "run_to_relative_position"
+    velocity: 0.45
+    degrees: -240
+    stop_action: "hold"
+  - type: "sleep"
+    duration_sec: 0.15
+  - type: "run_to_relative_position"
+    velocity: 0.45
+    degrees: 240
+    stop_action: "hold"
+  - type: "sleep"
+    duration_sec: 0.15
+  - type: "run_to_relative_position"
+    velocity: 0.45
+    degrees: -120
+    stop_action: "hold"

@@ -10,6 +10,8 @@ services:
     environment:
       ROS_DOMAIN_ID: "25"
       RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    volumes:
+      - ./patterns:/patterns
     command: bash
 
   participant-dev:
@@ -25,5 +27,6 @@ services:
       ROS_DOMAIN_ID: "25"
       RMW_IMPLEMENTATION: rmw_fastrtps_cpp
     volumes:
+      - ./patterns:/patterns
       - ./ros2_ws/src:/ros2_ws/src
     command: bash

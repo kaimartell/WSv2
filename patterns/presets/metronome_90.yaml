@@ -1,0 +1,44 @@
+name: "metronome_90_finite"
+version: 1
+defaults:
+  motor_port: "A"
+  stop_action: "brake"
+steps:
+  - type: "run_for_time"
+    velocity: 0.45
+    duration_sec: 0.12
+  - type: "sleep"
+    duration_sec: 0.55
+  - type: "run_for_time"
+    velocity: 0.45
+    duration_sec: 0.12
+  - type: "sleep"
+    duration_sec: 0.55
+  - type: "run_for_time"
+    velocity: 0.45
+    duration_sec: 0.12
+  - type: "sleep"
+    duration_sec: 0.55
+  - type: "run_for_time"
+    velocity: 0.45
+    duration_sec: 0.12
+  - type: "sleep"
+    duration_sec: 0.55
+  - type: "run_for_time"
+    velocity: 0.45
+    duration_sec: 0.12
+  - type: "sleep"
+    duration_sec: 0.55
+  - type: "run_for_time"
+    velocity: 0.45
+    duration_sec: 0.12
+  - type: "sleep"
+    duration_sec: 0.55
+  - type: "run_for_time"
+    velocity: 0.45
+    duration_sec: 0.12
+  - type: "sleep"
+    duration_sec: 0.55
+  - type: "run_for_time"
+    velocity: 0.45
+    duration_sec: 0.12

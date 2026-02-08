@@ -39,6 +39,10 @@ ros2_ws/install/
 .env.*
 *.tar
 
+# Workshop user-generated patterns
+patterns/user/*
+!patterns/user/.keep
+
 # Editor / IDE
 .idea/
 .vscode/

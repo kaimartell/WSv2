@@ -234,7 +234,9 @@ class SpikeBleBackend:
                 self._running_until = 0.0
                 self._timestamp = time.time()
 
-    def run(self, speed: float, duration: float) -> Dict[str, Any]:
+    def run(self, speed: float, duration: float, port: str = "") -> Dict[str, Any]:
+        if port:
+            self._motor_port = str(port).strip().upper() or self._motor_port
         safe_speed = max(-1.0, min(1.0, float(speed)))
         safe_duration = max(0.0, float(duration))
 
@@ -272,7 +274,9 @@ class SpikeBleBackend:
         )
         return {"accepted": True}
 
-    def stop(self) -> Dict[str, Any]:
+    def stop(self, port: str = "", stop_action: str = "coast") -> Dict[str, Any]:
+        if port:
+            self._motor_port = str(port).strip().upper() or self._motor_port
         worker: Optional[threading.Thread]
         with self._lock:
             self._cancel_event.set()
@@ -286,8 +290,61 @@ class SpikeBleBackend:
             worker.join(timeout=0.5)
 
         self._write_packet(self._build_start_power_packet(0.0))
-        logging.info("[SPIKE_BLE] motor/stop")
+        logging.info("[SPIKE_BLE] motor/stop stop_action=%s", stop_action)
         return {"stopped": True}
+
+    def reset_relative(self, port: str = "A") -> Dict[str, Any]:
+        return {"accepted": False, "error": "reset_relative not implemented for spike_ble"}
+
+    def run_for_degrees(
+        self,
+        port: str,
+        speed: float,
+        degrees: int,
+        stop_action: str = "coast",
+    ) -> Dict[str, Any]:
+        # BLE fallback approximates by running for a short estimated duration.
+        estimated_duration = max(0.1, min(4.0, abs(int(degrees)) / 700.0))
+        run_result = self.run(speed=speed, duration=estimated_duration, port=port)
+        if not bool(run_result.get("accepted", False)):
+            return run_result
+        self.stop(port=port, stop_action=stop_action)
+        return {"accepted": True, "note": "approximate run_for_degrees over BLE"}
+
+    def run_to_absolute(
+        self,
+        port: str,
+        speed: float,
+        position_degrees: int,
+        stop_action: str = "coast",
+    ) -> Dict[str, Any]:
+        estimated_duration = max(0.1, min(4.0, abs(int(position_degrees)) / 800.0))
+        run_result = self.run(speed=speed, duration=estimated_duration, port=port)
+        if not bool(run_result.get("accepted", False)):
+            return run_result
+        self.stop(port=port, stop_action=stop_action)
+        return {"accepted": True, "note": "approximate run_to_absolute over BLE"}
+
+    def run_to_relative(
+        self,
+        port: str,
+        speed: float,
+        degrees: int,
+        stop_action: str = "coast",
+    ) -> Dict[str, Any]:
+        return self.run_for_degrees(
+            port=port,
+            speed=speed,
+            degrees=degrees,
+            stop_action=stop_action,
+        )
+
+    def set_duty_cycle(self, port: str, speed: float) -> Dict[str, Any]:
+        return self.run(speed=float(speed), duration=0.2, port=port)
+
+    def motor_status(self, port: str = "A") -> Dict[str, Any]:
+        state = self.get_state()
+        return {"ok": True, "port": port, **state}
 
     def _probe_connection(self) -> bool:
         if self._dependency_error is not None:

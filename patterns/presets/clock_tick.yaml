@@ -1,0 +1,35 @@
+name: "clock_tick"
+version: 1
+defaults:
+  motor_port: "A"
+  stop_action: "hold"
+steps:
+  - type: "reset_relative_position"
+  - type: "run_to_absolute_position"
+    velocity: 0.45
+    position_degrees: 0
+    stop_action: "hold"
+  - type: "sleep"
+    duration_sec: 0.25
+  - type: "run_to_absolute_position"
+    velocity: 0.45
+    position_degrees: 90
+    stop_action: "hold"
+  - type: "sleep"
+    duration_sec: 0.25
+  - type: "run_to_absolute_position"
+    velocity: 0.45
+    position_degrees: 180
+    stop_action: "hold"
+  - type: "sleep"
+    duration_sec: 0.25
+  - type: "run_to_absolute_position"
+    velocity: 0.45
+    position_degrees: 270
+    stop_action: "hold"
+  - type: "sleep"
+    duration_sec: 0.25
+  - type: "run_to_absolute_position"
+    velocity: 0.45
+    position_degrees: 360
+    stop_action: "hold"

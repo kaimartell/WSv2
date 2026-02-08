@@ -9,11 +9,13 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("host_agent_url", default_value="http://host.docker.internal:8000"),
         DeclareLaunchArgument("poll_hz", default_value="2.0"),
         DeclareLaunchArgument("http_timeout_sec", default_value="1.5"),
+        DeclareLaunchArgument("action_http_timeout_sec", default_value="8.0"),
         DeclareLaunchArgument("unreachable_log_throttle_sec", default_value="10.0"),
         DeclareLaunchArgument("consecutive_failures_to_mark_down", default_value="2"),
         DeclareLaunchArgument("consecutive_successes_to_mark_up", default_value="1"),
         DeclareLaunchArgument("queue_policy", default_value="latest"),
         DeclareLaunchArgument("fifo_queue_size", default_value="32"),
+        DeclareLaunchArgument("action_queue_size", default_value="64"),
         DeclareLaunchArgument("participant_id", default_value="1"),
         DeclareLaunchArgument("name", default_value="instrument"),
         DeclareLaunchArgument("mode", default_value="pulse"),
@@ -25,7 +27,9 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("sweep_steps", default_value="8"),
         DeclareLaunchArgument("seed", default_value="0"),
         DeclareLaunchArgument("sequence_file", default_value=""),
+        DeclareLaunchArgument("pattern_file", default_value=""),
         DeclareLaunchArgument("cmd_topic", default_value="/spike/cmd"),
+        DeclareLaunchArgument("action_topic", default_value="/spike/action"),
         DeclareLaunchArgument("done_topic", default_value="/done"),
         DeclareLaunchArgument("status_topic", default_value="/status"),
     ]
@@ -40,6 +44,7 @@ def generate_launch_description() -> LaunchDescription:
                 "host_agent_url": LaunchConfiguration("host_agent_url"),
                 "poll_hz": LaunchConfiguration("poll_hz"),
                 "http_timeout_sec": LaunchConfiguration("http_timeout_sec"),
+                "action_http_timeout_sec": LaunchConfiguration("action_http_timeout_sec"),
                 "unreachable_log_throttle_sec": LaunchConfiguration("unreachable_log_throttle_sec"),
                 "consecutive_failures_to_mark_down": LaunchConfiguration(
                     "consecutive_failures_to_mark_down"
@@ -49,6 +54,8 @@ def generate_launch_description() -> LaunchDescription:
                 ),
                 "queue_policy": LaunchConfiguration("queue_policy"),
                 "fifo_queue_size": LaunchConfiguration("fifo_queue_size"),
+                "action_topic": LaunchConfiguration("action_topic"),
+                "action_queue_size": LaunchConfiguration("action_queue_size"),
             }
         ],
     )
@@ -71,7 +78,9 @@ def generate_launch_description() -> LaunchDescription:
                 "sweep_steps": LaunchConfiguration("sweep_steps"),
                 "seed": LaunchConfiguration("seed"),
                 "sequence_file": LaunchConfiguration("sequence_file"),
+                "pattern_file": LaunchConfiguration("pattern_file"),
                 "cmd_topic": LaunchConfiguration("cmd_topic"),
+                "action_topic": LaunchConfiguration("action_topic"),
                 "done_topic": LaunchConfiguration("done_topic"),
                 "status_topic": LaunchConfiguration("status_topic"),
             }

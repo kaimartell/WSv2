@@ -24,7 +24,7 @@ def build_steps(
     if normalized == "pulse":
         return _build_pulse(speed=speed, duration=duration, repeats=repeats)
     if normalized == "metronome":
-        return _build_metronome(speed=speed, duration=duration, repeats=repeats, bpm=bpm)
+        return _build_metronome(speed=speed, duration=duration, bpm=bpm)
     if normalized == "sweep":
         return _build_sweep(amplitude=amplitude, duration=duration, sweep_steps=sweep_steps)
     if normalized == "random_wiggle":
@@ -55,8 +55,7 @@ def _build_pulse(*, speed: float, duration: float, repeats: int) -> List[Step]:
     return steps
 
 
-def _build_metronome(*, speed: float, duration: float, repeats: int, bpm: float) -> List[Step]:
-    beat_count = max(1, int(repeats))
+def _build_metronome(*, speed: float, duration: float, bpm: float) -> List[Step]:
     tempo = max(1.0, float(bpm))
     beat_period = 60.0 / tempo
 
@@ -67,11 +66,11 @@ def _build_metronome(*, speed: float, duration: float, repeats: int, bpm: float)
         on_duration = min(requested_on, beat_period)
     off_duration = max(0.0, beat_period - on_duration)
 
-    steps: List[Step] = []
-    for _ in range(beat_count):
-        steps.append({"speed": float(speed), "duration": on_duration})
-        if off_duration > 0.0:
-            steps.append({"speed": 0.0, "duration": off_duration})
+    # Metronome continuity is implemented by timer logic in instrument_node.
+    # Keep this helper to represent one beat cycle.
+    steps: List[Step] = [{"speed": float(speed), "duration": on_duration}]
+    if off_duration > 0.0:
+        steps.append({"speed": 0.0, "duration": off_duration})
     return steps
 
 

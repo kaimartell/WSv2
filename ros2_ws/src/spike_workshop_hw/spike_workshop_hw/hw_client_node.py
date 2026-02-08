@@ -13,6 +13,7 @@ from spike_workshop_hw.http_client import HostAgentHttpClient
 
 STOP_COMMAND_EPSILON = 1e-3
 DEFAULT_FIFO_QUEUE_SIZE = 32
+DEFAULT_ACTION_QUEUE_SIZE = 64
 QUEUE_PRESSURE_LOG_THROTTLE_SEC = 5.0
 
 
@@ -23,17 +24,22 @@ class SpikeHwClientNode(Node):
         self.declare_parameter("host_agent_url", "http://host.docker.internal:8000")
         self.declare_parameter("poll_hz", 2.0)
         self.declare_parameter("http_timeout_sec", 1.5)
+        self.declare_parameter("action_http_timeout_sec", 8.0)
         self.declare_parameter("unreachable_log_throttle_sec", 10.0)
         self.declare_parameter("consecutive_failures_to_mark_down", 2)
         self.declare_parameter("consecutive_successes_to_mark_up", 1)
         self.declare_parameter("queue_policy", "latest")
         self.declare_parameter("fifo_queue_size", DEFAULT_FIFO_QUEUE_SIZE)
+        self.declare_parameter("action_topic", "/spike/action")
+        self.declare_parameter("action_queue_size", DEFAULT_ACTION_QUEUE_SIZE)
 
         host_agent_url = str(self.get_parameter("host_agent_url").value).rstrip("/")
         poll_hz = float(self.get_parameter("poll_hz").value)
         poll_hz = poll_hz if poll_hz > 0.0 else 2.0
         http_timeout_sec = float(self.get_parameter("http_timeout_sec").value)
         http_timeout_sec = http_timeout_sec if http_timeout_sec > 0.0 else 1.5
+        action_http_timeout_sec = float(self.get_parameter("action_http_timeout_sec").value)
+        action_http_timeout_sec = action_http_timeout_sec if action_http_timeout_sec > 0.0 else 8.0
         unreachable_log_throttle_sec = float(
             self.get_parameter("unreachable_log_throttle_sec").value
         )
@@ -54,14 +60,20 @@ class SpikeHwClientNode(Node):
             queue_policy = "latest"
         fifo_queue_size = int(self.get_parameter("fifo_queue_size").value)
         fifo_queue_size = max(1, fifo_queue_size)
+        action_topic = str(self.get_parameter("action_topic").value).strip() or "/spike/action"
+        action_queue_size = int(self.get_parameter("action_queue_size").value)
+        action_queue_size = max(1, action_queue_size)
 
         self._host_agent_url = host_agent_url
         self._http_timeout_sec = http_timeout_sec
+        self._action_http_timeout_sec = action_http_timeout_sec
         self._unreachable_log_throttle_sec = unreachable_log_throttle_sec
         self._consecutive_failures_to_mark_down = consecutive_failures_to_mark_down
         self._consecutive_successes_to_mark_up = consecutive_successes_to_mark_up
         self._queue_policy = queue_policy
         self._fifo_queue_size = fifo_queue_size
+        self._action_topic = action_topic
+        self._action_queue_size = action_queue_size
 
         self._http_client = HostAgentHttpClient(host_agent_url, timeout=http_timeout_sec)
 
@@ -87,7 +99,14 @@ class SpikeHwClientNode(Node):
         self._last_queue_pressure_log_monotonic = 0.0
         self._cmd_event = threading.Event()
 
+        self._action_lock = threading.Lock()
+        self._action_queue: Deque[Dict[str, Any]] = deque()
+        self._action_drop_count = 0
+        self._last_action_queue_log_monotonic = 0.0
+        self._action_event = threading.Event()
+
         self._shutting_down = False
+
         self._cmd_worker_thread = threading.Thread(
             target=self._command_worker_loop,
             name="spike_hw_cmd_worker",
@@ -95,8 +114,16 @@ class SpikeHwClientNode(Node):
         )
         self._cmd_worker_thread.start()
 
+        self._action_worker_thread = threading.Thread(
+            target=self._action_worker_loop,
+            name="spike_hw_action_worker",
+            daemon=True,
+        )
+        self._action_worker_thread.start()
+
         self._state_pub = self.create_publisher(String, "/spike/state", 10)
         self._cmd_sub = self.create_subscription(String, "/spike/cmd", self._on_cmd, 10)
+        self._action_sub = self.create_subscription(String, self._action_topic, self._on_action, 10)
         self._ping_srv = self.create_service(Trigger, "/spike/ping", self._on_ping)
         self._poll_timer = self.create_timer(1.0 / poll_hz, self._poll_state)
 
@@ -105,11 +132,12 @@ class SpikeHwClientNode(Node):
             (
                 "spike_hw_client_node online: "
                 f"host_agent_url={host_agent_url}, poll_hz={poll_hz}, "
-                f"http_timeout_sec={http_timeout_sec:.2f}, "
+                f"http_timeout_sec={http_timeout_sec:.2f}, action_http_timeout_sec={action_http_timeout_sec:.2f}, "
                 f"unreachable_log_throttle_sec={unreachable_log_throttle_sec:.1f}, "
                 f"consecutive_failures_to_mark_down={consecutive_failures_to_mark_down}, "
                 f"consecutive_successes_to_mark_up={consecutive_successes_to_mark_up}, "
-                f"queue_policy={queue_policy}, fifo_queue_size={fifo_queue_size}"
+                f"queue_policy={queue_policy}, fifo_queue_size={fifo_queue_size}, "
+                f"action_topic={self._action_topic}, action_queue_size={self._action_queue_size}"
             ),
         )
         self._safe_log("info", "Ping service ready on /spike/ping")
@@ -361,7 +389,11 @@ class SpikeHwClientNode(Node):
                 error=str(meta.get("error", "")),
             )
 
-            accepted = bool(result.get("stopped", False)) if is_stop else bool(result.get("accepted", False))
+            accepted = (
+                bool(result.get("stopped", False))
+                if is_stop
+                else bool(result.get("accepted", False))
+            )
             if accepted:
                 with self._cmd_lock:
                     self._last_sent_speed = 0.0 if is_stop else speed
@@ -395,6 +427,263 @@ class SpikeHwClientNode(Node):
             return
 
         self._queue_command(speed=speed, duration=duration)
+
+    def _queue_action(self, action: Dict[str, Any]) -> None:
+        dropped = False
+        with self._action_lock:
+            if len(self._action_queue) >= self._action_queue_size:
+                self._action_queue.popleft()
+                self._action_drop_count += 1
+                dropped = True
+            self._action_queue.append(action)
+            self._action_event.set()
+
+            now = time.monotonic()
+            should_log = (
+                dropped
+                and now - self._last_action_queue_log_monotonic >= QUEUE_PRESSURE_LOG_THROTTLE_SEC
+            )
+            if should_log:
+                self._last_action_queue_log_monotonic = now
+                drop_count = self._action_drop_count
+                depth = len(self._action_queue)
+            else:
+                drop_count = 0
+                depth = 0
+
+        if drop_count > 0:
+            self._safe_log(
+                "warning",
+                (
+                    f"/spike/action queue overflow: dropped={drop_count}, "
+                    f"depth={depth}/{self._action_queue_size}. "
+                    "Increase action_queue_size if pattern steps are being dropped."
+                ),
+            )
+
+    def _pop_next_action(self) -> Optional[Dict[str, Any]]:
+        with self._action_lock:
+            if not self._action_queue:
+                self._action_event.clear()
+                return None
+            action = self._action_queue.popleft()
+            if not self._action_queue:
+                self._action_event.clear()
+            return action
+
+    def _on_action(self, msg: String) -> None:
+        if self._shutting_down:
+            return
+
+        try:
+            payload = json.loads(msg.data)
+            if not isinstance(payload, dict):
+                raise ValueError("payload must be a JSON object")
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            self._safe_log("warning", f"Ignoring malformed /spike/action payload: {exc}")
+            return
+
+        self._queue_action(payload)
+
+    def _sleep_with_shutdown(self, duration_sec: float) -> bool:
+        remaining = max(0.0, float(duration_sec))
+        while remaining > 0.0:
+            if self._shutting_down:
+                return False
+            chunk = min(0.05, remaining)
+            time.sleep(chunk)
+            remaining -= chunk
+        return True
+
+    def _action_success(self, result: Dict[str, Any]) -> bool:
+        if "accepted" in result:
+            return bool(result.get("accepted", False))
+        if "stopped" in result:
+            return bool(result.get("stopped", False))
+        if "ok" in result:
+            return bool(result.get("ok", False))
+        return False
+
+    def _forward_action(
+        self, action: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], str, Optional[float], str]:
+        action_type = str(action.get("type", "")).strip().lower()
+        if not action_type:
+            return (
+                {"accepted": False, "error": "missing action type"},
+                {"ok": True, "latency_ms": 0.0, "error": ""},
+                "local action validation",
+                None,
+                action_type,
+            )
+
+        port = str(action.get("port", "A")).strip().upper() or "A"
+        stop_action = str(action.get("stop_action", "coast")).strip().lower()
+        speed = max(-1.0, min(1.0, float(action.get("speed", 0.0))))
+
+        if action_type == "run":
+            duration = max(0.0, float(action.get("duration", 0.0)))
+            if self._is_stop_command(speed):
+                result, meta = self._http_client.stop_motor_with_meta(
+                    port=port,
+                    stop_action=stop_action,
+                    timeout_sec=self._action_http_timeout_sec,
+                )
+                return result, meta, "POST /motor/stop", 0.0, action_type
+
+            result, meta = self._http_client.run_motor_with_meta(
+                speed=speed,
+                duration=duration,
+                port=port,
+                timeout_sec=self._action_http_timeout_sec,
+            )
+            return result, meta, "POST /motor/run", speed, action_type
+
+        if action_type == "stop":
+            result, meta = self._http_client.stop_motor_with_meta(
+                port=port,
+                stop_action=stop_action,
+                timeout_sec=self._action_http_timeout_sec,
+            )
+            return result, meta, "POST /motor/stop", 0.0, action_type
+
+        if action_type == "run_for_time":
+            duration_sec = max(0.0, float(action.get("duration_sec", 0.0)))
+            run_result, run_meta = self._http_client.run_motor_with_meta(
+                speed=speed,
+                duration=duration_sec,
+                port=port,
+                timeout_sec=self._action_http_timeout_sec,
+            )
+            if not bool(run_result.get("accepted", False)):
+                return run_result, run_meta, "POST /motor/run", None, action_type
+
+            if not self._sleep_with_shutdown(duration_sec):
+                return (
+                    {"accepted": False, "error": "shutdown while waiting run_for_time"},
+                    {"ok": True, "latency_ms": 0.0, "error": ""},
+                    "local run_for_time wait",
+                    None,
+                    action_type,
+                )
+
+            stop_result, stop_meta = self._http_client.stop_motor_with_meta(
+                port=port,
+                stop_action=stop_action,
+                timeout_sec=self._action_http_timeout_sec,
+            )
+            accepted = bool(run_result.get("accepted", False)) and bool(stop_result.get("stopped", False))
+            result = {
+                "accepted": accepted,
+                "run": run_result,
+                "stop": stop_result,
+            }
+            if not accepted and "error" not in result:
+                result["error"] = stop_result.get("error", "run_for_time stop failed")
+            return (
+                result,
+                stop_meta,
+                "POST /motor/run + /motor/stop",
+                0.0,
+                action_type,
+            )
+
+        if action_type == "run_for_degrees":
+            degrees = int(action.get("degrees", 0))
+            result, meta = self._http_client.run_for_degrees_with_meta(
+                port=port,
+                speed=speed,
+                degrees=degrees,
+                stop_action=stop_action,
+                timeout_sec=self._action_http_timeout_sec,
+            )
+            return result, meta, "POST /motor/run_for_degrees", 0.0, action_type
+
+        if action_type == "run_to_absolute_position":
+            position_degrees = int(action.get("position_degrees", 0))
+            result, meta = self._http_client.run_to_absolute_with_meta(
+                port=port,
+                speed=speed,
+                position_degrees=position_degrees,
+                stop_action=stop_action,
+                timeout_sec=self._action_http_timeout_sec,
+            )
+            return result, meta, "POST /motor/run_to_absolute", 0.0, action_type
+
+        if action_type == "run_to_relative_position":
+            degrees = int(action.get("degrees", 0))
+            result, meta = self._http_client.run_to_relative_with_meta(
+                port=port,
+                speed=speed,
+                degrees=degrees,
+                stop_action=stop_action,
+                timeout_sec=self._action_http_timeout_sec,
+            )
+            return result, meta, "POST /motor/run_to_relative", 0.0, action_type
+
+        if action_type == "reset_relative_position":
+            result, meta = self._http_client.reset_relative_with_meta(
+                port=port,
+                timeout_sec=self._action_http_timeout_sec,
+            )
+            return result, meta, "POST /motor/reset_relative", 0.0, action_type
+
+        if action_type == "set_duty_cycle":
+            result, meta = self._http_client.set_duty_cycle_with_meta(
+                port=port,
+                speed=speed,
+                timeout_sec=self._action_http_timeout_sec,
+            )
+            return result, meta, "POST /motor/set_duty_cycle", speed, action_type
+
+        if action_type == "status":
+            result, meta = self._http_client.get_motor_status_with_meta(
+                port=port,
+                timeout_sec=self._action_http_timeout_sec,
+            )
+            return result, meta, "POST /motor/status", None, action_type
+
+        return (
+            {"accepted": False, "error": f"unsupported action type '{action_type}'"},
+            {"ok": True, "latency_ms": 0.0, "error": ""},
+            "local action validation",
+            None,
+            action_type,
+        )
+
+    def _action_worker_loop(self) -> None:
+        while True:
+            self._action_event.wait(timeout=0.2)
+            if self._shutting_down:
+                return
+
+            action = self._pop_next_action()
+            if action is None:
+                continue
+
+            result, meta, source, resulting_speed, action_type = self._forward_action(action)
+
+            self._record_connectivity(
+                transport_ok=bool(meta.get("ok", False)),
+                source=source,
+                latency_ms=self._to_float(meta.get("latency_ms")),
+                error=str(meta.get("error", "")),
+            )
+
+            accepted = self._action_success(result)
+            if accepted:
+                if resulting_speed is not None:
+                    with self._cmd_lock:
+                        self._last_sent_speed = float(resulting_speed)
+                self._safe_log(
+                    "info",
+                    f"Forwarded /spike/action type={action_type} via {source}",
+                )
+            else:
+                self._safe_log(
+                    "warning",
+                    f"Host agent rejected /spike/action type={action_type}: {result}",
+                )
 
     def _poll_state(self) -> None:
         if self._shutting_down:
@@ -468,8 +757,11 @@ class SpikeHwClientNode(Node):
             self._poll_timer.cancel()
 
         self._cmd_event.set()
+        self._action_event.set()
         if self._cmd_worker_thread.is_alive():
             self._cmd_worker_thread.join(timeout=max(1.0, self._http_timeout_sec + 0.5))
+        if self._action_worker_thread.is_alive():
+            self._action_worker_thread.join(timeout=max(1.0, self._action_http_timeout_sec + 0.5))
 
         result, _meta = self._http_client.stop_motor_with_meta()
         if not bool(result.get("stopped", False)):

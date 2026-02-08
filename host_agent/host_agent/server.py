@@ -1,4 +1,5 @@
 import json
+import inspect
 import logging
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -43,6 +44,34 @@ class HostAgentHTTPServer(ThreadingHTTPServer):
 class HostAgentRequestHandler(BaseHTTPRequestHandler):
     server: HostAgentHTTPServer
 
+    def _invoke_backend(self, method_name: str, **kwargs: Any) -> Any:
+        method = getattr(self.server.backend, method_name, None)
+        if method is None:
+            raise AttributeError(f"backend does not implement {method_name}()")
+
+        signature = inspect.signature(method)
+        accepts_var_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in signature.parameters.values()
+        )
+        if accepts_var_kwargs:
+            return method(**kwargs)
+
+        accepted_names = set(signature.parameters.keys())
+        filtered = {key: value for key, value in kwargs.items() if key in accepted_names}
+        return method(**filtered)
+
+    @staticmethod
+    def _response_from_result(result: Any, *, true_key: str, false_default: Dict[str, Any]) -> Dict[str, Any]:
+        if isinstance(result, dict):
+            payload = dict(result)
+            if true_key not in payload:
+                payload[true_key] = bool(payload.get("ok", False))
+            return payload
+        payload = dict(false_default)
+        payload[true_key] = bool(result)
+        return payload
+
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         try:
@@ -71,8 +100,9 @@ class HostAgentRequestHandler(BaseHTTPRequestHandler):
             if path == "/motor/run":
                 speed = float(payload.get("speed", 0.0))
                 duration = float(payload.get("duration", 0.0))
+                port = str(payload.get("port", "")).strip().upper()
                 try:
-                    result = self.server.backend.run(speed=speed, duration=duration)
+                    result = self._invoke_backend("run", speed=speed, duration=duration, port=port)
                 except Exception:  # noqa: BLE001
                     logging.exception("Backend run() failed")
                     self._write_json(
@@ -80,21 +110,23 @@ class HostAgentRequestHandler(BaseHTTPRequestHandler):
                     )
                     return
 
-                if isinstance(result, dict):
-                    accepted = bool(result.get("accepted", False))
-                    response: Dict[str, Any] = {"accepted": accepted}
-                    if "error" in result:
-                        response["error"] = str(result["error"])
-                    if "note" in result:
-                        response["note"] = str(result["note"])
-                    self._write_json(HTTPStatus.OK, response)
-                else:
-                    self._write_json(HTTPStatus.OK, {"accepted": True})
+                response = self._response_from_result(
+                    result,
+                    true_key="accepted",
+                    false_default={"accepted": False},
+                )
+                self._write_json(HTTPStatus.OK, response)
                 return
 
             if path == "/motor/stop":
+                port = str(payload.get("port", "")).strip().upper()
+                stop_action = str(payload.get("stop_action", "")).strip().lower()
                 try:
-                    result = self.server.backend.stop()
+                    result = self._invoke_backend(
+                        "stop",
+                        port=port,
+                        stop_action=stop_action,
+                    )
                 except Exception:  # noqa: BLE001
                     logging.exception("Backend stop() failed")
                     self._write_json(
@@ -102,14 +134,162 @@ class HostAgentRequestHandler(BaseHTTPRequestHandler):
                     )
                     return
 
+                response = self._response_from_result(
+                    result,
+                    true_key="stopped",
+                    false_default={"stopped": False},
+                )
+                self._write_json(HTTPStatus.OK, response)
+                return
+
+            if path == "/motor/reset_relative":
+                port = str(payload.get("port", "A")).strip().upper() or "A"
+                try:
+                    result = self._invoke_backend("reset_relative", port=port)
+                except Exception:  # noqa: BLE001
+                    logging.exception("Backend reset_relative() failed")
+                    self._write_json(
+                        HTTPStatus.OK,
+                        {"accepted": False, "error": "backend_reset_relative_exception"},
+                    )
+                    return
+
+                response = self._response_from_result(
+                    result,
+                    true_key="accepted",
+                    false_default={"accepted": False},
+                )
+                self._write_json(HTTPStatus.OK, response)
+                return
+
+            if path == "/motor/run_for_degrees":
+                port = str(payload.get("port", "A")).strip().upper() or "A"
+                speed = float(payload.get("speed", 0.0))
+                degrees = int(payload.get("degrees", 0))
+                stop_action = str(payload.get("stop_action", "")).strip().lower()
+                try:
+                    result = self._invoke_backend(
+                        "run_for_degrees",
+                        port=port,
+                        speed=speed,
+                        degrees=degrees,
+                        stop_action=stop_action,
+                    )
+                except Exception:  # noqa: BLE001
+                    logging.exception("Backend run_for_degrees() failed")
+                    self._write_json(
+                        HTTPStatus.OK,
+                        {"accepted": False, "error": "backend_run_for_degrees_exception"},
+                    )
+                    return
+
+                response = self._response_from_result(
+                    result,
+                    true_key="accepted",
+                    false_default={"accepted": False},
+                )
+                self._write_json(HTTPStatus.OK, response)
+                return
+
+            if path == "/motor/run_to_absolute":
+                port = str(payload.get("port", "A")).strip().upper() or "A"
+                speed = float(payload.get("speed", 0.0))
+                position_degrees = int(payload.get("position_degrees", 0))
+                stop_action = str(payload.get("stop_action", "")).strip().lower()
+                try:
+                    result = self._invoke_backend(
+                        "run_to_absolute",
+                        port=port,
+                        speed=speed,
+                        position_degrees=position_degrees,
+                        stop_action=stop_action,
+                    )
+                except Exception:  # noqa: BLE001
+                    logging.exception("Backend run_to_absolute() failed")
+                    self._write_json(
+                        HTTPStatus.OK,
+                        {"accepted": False, "error": "backend_run_to_absolute_exception"},
+                    )
+                    return
+
+                response = self._response_from_result(
+                    result,
+                    true_key="accepted",
+                    false_default={"accepted": False},
+                )
+                self._write_json(HTTPStatus.OK, response)
+                return
+
+            if path == "/motor/run_to_relative":
+                port = str(payload.get("port", "A")).strip().upper() or "A"
+                speed = float(payload.get("speed", 0.0))
+                degrees = int(payload.get("degrees", 0))
+                stop_action = str(payload.get("stop_action", "")).strip().lower()
+                try:
+                    result = self._invoke_backend(
+                        "run_to_relative",
+                        port=port,
+                        speed=speed,
+                        degrees=degrees,
+                        stop_action=stop_action,
+                    )
+                except Exception:  # noqa: BLE001
+                    logging.exception("Backend run_to_relative() failed")
+                    self._write_json(
+                        HTTPStatus.OK,
+                        {"accepted": False, "error": "backend_run_to_relative_exception"},
+                    )
+                    return
+
+                response = self._response_from_result(
+                    result,
+                    true_key="accepted",
+                    false_default={"accepted": False},
+                )
+                self._write_json(HTTPStatus.OK, response)
+                return
+
+            if path == "/motor/set_duty_cycle":
+                port = str(payload.get("port", "A")).strip().upper() or "A"
+                speed = float(payload.get("speed", 0.0))
+                try:
+                    result = self._invoke_backend(
+                        "set_duty_cycle",
+                        port=port,
+                        speed=speed,
+                    )
+                except Exception:  # noqa: BLE001
+                    logging.exception("Backend set_duty_cycle() failed")
+                    self._write_json(
+                        HTTPStatus.OK,
+                        {"accepted": False, "error": "backend_set_duty_cycle_exception"},
+                    )
+                    return
+
+                response = self._response_from_result(
+                    result,
+                    true_key="accepted",
+                    false_default={"accepted": False},
+                )
+                self._write_json(HTTPStatus.OK, response)
+                return
+
+            if path == "/motor/status":
+                port = str(payload.get("port", "A")).strip().upper() or "A"
+                try:
+                    result = self._invoke_backend("motor_status", port=port)
+                except Exception:  # noqa: BLE001
+                    logging.exception("Backend motor_status() failed")
+                    self._write_json(
+                        HTTPStatus.OK,
+                        {"ok": False, "error": "backend_motor_status_exception"},
+                    )
+                    return
+
                 if isinstance(result, dict):
-                    stopped = bool(result.get("stopped", False))
-                    response = {"stopped": stopped}
-                    if "error" in result:
-                        response["error"] = str(result["error"])
-                    self._write_json(HTTPStatus.OK, response)
+                    self._write_json(HTTPStatus.OK, result)
                 else:
-                    self._write_json(HTTPStatus.OK, {"stopped": True})
+                    self._write_json(HTTPStatus.OK, {"ok": bool(result)})
                 return
 
             self._write_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})

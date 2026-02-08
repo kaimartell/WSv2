@@ -2,143 +2,227 @@
 
 Build a physical instrument using ROS 2 and LEGO SPIKE Prime.
 
-`spike-ros-workshop` is a beginner-friendly workshop project where participants use ROS commands instead of writing code. You run one host-side service, start one Dockerized ROS environment, launch one ROS app, then trigger the instrument with CLI commands.
+This repository packages a participant-side workshop environment:
+- ROS 2 Humble in Docker
+- host-side `host_agent` for SPIKE communication
+- no-code instrument behaviors + pattern/score playback
+- YAML pattern presets and a pattern wizard
 
-The focus is learning core ROS ideas in a hands-on way: nodes, topics, parameters, services, and observability. The provided defaults work in `mock` mode even without hardware, and switch to real SPIKE hardware when USB is available.
+## Pre-Workshop Setup
 
-## What this workshop is
-
-This workshop gives each participant their own local ROS 2 graph. The instrument behavior is already implemented and configurable through launch arguments like `mode`, `speed`, `duration`, `repeats`, and `bpm`.
-
-Participants inspect and control the system with `ros2 topic`, `ros2 service`, and `ros2 launch`. No coding is required during the workshop.
-
-## System architecture
-
-1. Host computer (macOS) connects to LEGO SPIKE Prime over USB.
-2. `host_agent` runs on macOS and exposes a simple HTTP API (`/health`, `/motor/run`, `/motor/stop`, `/state`).
-3. Dockerized ROS 2 container talks to `host_agent` via `http://host.docker.internal:8000`.
-4. `spike_hw_client_node` bridges ROS topics/services to host HTTP.
-5. `instrument_node` publishes motor commands and status based on launch parameters.
-6. Timing lives in ROS behavior logic: start motion with non-zero speed and stop with `speed:=0` (mapped to `/motor/stop`).
-
-## Prerequisites
-
-- macOS (Apple Silicon or Intel)
-- Docker Desktop
-- Python 3.9+
-- LEGO SPIKE Prime hub + motor + USB data cable
-
-## Quick start (10-minute path)
-
-1. Clone the repository:
+- [ ] Install Docker Desktop and start it.
+- [ ] Install Python 3.9+.
+- [ ] Connect LEGO SPIKE Prime hub + motor + USB data cable.
+- [ ] Clone this repo and `cd` into it.
+- [ ] Install host agent dependencies.
 
 ```bash
-git clone https://github.com/kaimartell/spike-ros-workshop.git
+git clone https://github.com/<your-org-or-user>/spike-ros-workshop.git
 cd spike-ros-workshop
-```
 
-2. Install host agent dependencies (USB backend):
-
-```bash
 cd host_agent
 python3 -m pip install -e ".[spike_usb]"
 cd ..
 ```
 
-3. Start host agent (USB mode):
+Quick verification:
 
 ```bash
-cd host_agent
-python3 -m host_agent --port 8000 --backend spike_usb --serial-port auto --motor-port A
+docker info >/dev/null && echo "Docker OK"
+python3 --version
 ```
 
-If you are not using hardware yet, run mock instead:
+## 10-Minute Quick Start (Command-First)
+
+1. Start host agent (USB):
 
 ```bash
-python3 -m host_agent --port 8000 --backend mock
+./scripts/start_host_agent_usb.sh
 ```
 
-4. In a new terminal, run the ROS container:
+If you want mock mode:
 
 ```bash
-cd spike-ros-workshop
-./scripts/run.sh
+SPIKE_BACKEND=mock ./scripts/start_host_agent_usb.sh
 ```
 
-5. Inside the container, launch the instrument:
+2. Start the ROS container:
 
 ```bash
-ros2 launch spike_workshop_instrument instrument.launch.py mode:=pulse speed:=0.6 duration:=1.0 repeats:=4
+./scripts/start_container.sh
 ```
 
-6. Trigger the motor/instrument behavior:
-
-```bash
-ros2 topic pub /actuate std_msgs/msg/Empty "{}" -1
-```
-
-## Key ROS commands
-
-Check connectivity to host agent:
-
-```bash
-ros2 service call /spike/ping std_srvs/srv/Trigger "{}"
-```
-
-Observe state and status:
-
-```bash
-ros2 topic echo /status
-ros2 topic echo /spike/state
-```
-
-Trigger one actuation:
-
-```bash
-ros2 topic pub /actuate std_msgs/msg/Empty "{}" -1
-```
-
-Use launch parameters to customize behavior:
+3. Inside the container shell, launch instrument mode:
 
 ```bash
 ros2 launch spike_workshop_instrument instrument.launch.py \
-  mode:=metronome bpm:=120 repeats:=16 speed:=0.5 duration:=0.3
+  mode:=pulse speed:=0.6 duration:=1.0 repeats:=4 queue_policy:=edges
 ```
 
-Common launch parameters:
-- `mode` (`pulse|sweep|metronome|random_wiggle|sequence`)
-- `speed`, `duration`, `repeats`, `bpm`, `amplitude`
-- `host_agent_url` (default `http://host.docker.internal:8000`)
-- `queue_policy` (`latest|edges|fifo`, default `latest`)
+4. In another container shell, trigger behavior:
 
-Queue policy recommendation:
-- Use `queue_policy:=edges` for pulse/sequence patterns to preserve run/stop transitions.
-- Use `queue_policy:=latest` for joystick-like continuous control.
+```bash
+ros2 topic pub /actuate std_msgs/msg/Empty "{}" -1
+```
 
-Timing note:
-- For real SPIKE USB backend, `/motor/run` is non-blocking (starts motor quickly).
-- `duration` is treated as advisory by the host agent.
-- Effective timing comes from ROS publishing a later stop command (`speed=0`, which `spike_hw_client_node` maps to `/motor/stop`).
+5. Observe:
 
-## Troubleshooting
+```bash
+ros2 topic echo /status
+ros2 topic echo /done
+ros2 topic echo /spike/state
+ros2 service call /spike/ping std_srvs/srv/Trigger "{}"
+```
 
-Serial port selection:
-- List candidates: `python3 -m host_agent --list`
-- If multiple serial ports exist, pick one explicitly:
-  `python3 -m host_agent --backend spike_usb --serial-port /dev/cu.usbmodemXXXX --motor-port A`
+## Common Workshop Tasks
 
-SPIKE app conflicts:
-- Close the LEGO SPIKE app before running `host_agent`; it can lock the serial port.
+### Play a preset pattern
 
-Motor not moving:
-- Check host agent health: `curl http://localhost:8000/health`
-- Check ROS connectivity: `ros2 service call /spike/ping std_srvs/srv/Trigger "{}"`
-- Try mock mode to isolate ROS path from hardware:
-  `python3 -m host_agent --port 8000 --backend mock`
-- If pulse counts collapse, launch with `queue_policy:=edges` and/or increase pulse `duration` and gap/off-time.
+From host (uses running container):
 
-## What’s next
+```bash
+./scripts/play_pattern.sh pulse_4
+./scripts/play_pattern.sh clock_tick
+./scripts/play_pattern.sh bounce_encoder
+```
 
-- Multi-participant orchestration and shared timing
-- Custom sequence editing for performances
-- Extending instrument behaviors and hardware backends
+Equivalent manual launch (inside container):
+
+```bash
+ros2 launch spike_workshop_instrument instrument.launch.py \
+  mode:=pattern \
+  pattern_file:=/patterns/presets/bounce_encoder.yaml \
+  queue_policy:=fifo
+```
+
+### Generate a user pattern (no coding)
+
+Interactive wizard:
+
+```bash
+python3 scripts/pattern_wizard.py
+```
+
+Non-interactive preset:
+
+```bash
+python3 scripts/pattern_wizard.py \
+  --preset pulse --speed 0.4 --duration 0.3 --repeats 6 \
+  --out patterns/user/pulse6.yaml
+```
+
+Play your generated pattern:
+
+```bash
+./scripts/play_pattern.sh /patterns/user/pulse6.yaml
+```
+
+### Check host and ROS connectivity
+
+```bash
+curl http://localhost:8000/health
+python3 -m host_agent --list
+ros2 service call /spike/ping std_srvs/srv/Trigger "{}"
+```
+
+## Patterns Quick Reference
+
+Preset files are in `patterns/presets/`:
+
+- `pulse_4.yaml`: finite pulse timing using `run_for_time` + `sleep`
+- `metronome_90.yaml`: finite metronome-style pattern at 90 BPM
+- `sweep_3s.yaml`: signed velocity sweep across a fixed duration
+- `dance_basic.yaml`: mixed timed + degree motions
+- `clock_tick.yaml`: absolute encoder positioning (`run_to_absolute_position`)
+- `bounce_encoder.yaml`: relative encoder positioning (`run_to_relative_position` + reset)
+
+Schema reference: `docs/pattern_schema.md`
+
+## Known Issues / FAQ
+
+### Docker Desktop is running but container start fails
+- Re-run `./scripts/preflight.sh`.
+- Ensure enough disk space in Docker Desktop settings.
+
+### USB serial auto-detect failed
+- Run `python3 -m host_agent --list`.
+- Set explicit serial path:
+
+```bash
+SPIKE_SERIAL=/dev/cu.usbmodemXXXX ./scripts/start_host_agent_usb.sh
+```
+
+### LEGO SPIKE app conflict
+- Close the SPIKE app before starting host agent; it can lock the serial port.
+
+### `ros2` command not found in container
+- Source ROS setup manually:
+
+```bash
+source /opt/ros/humble/setup.bash
+source /ros2_ws/install/setup.bash
+```
+
+### Pattern launch fails due to parameter typing
+- Keep numeric params numeric, e.g. `bpm:=90.0` not `bpm:=ninety`.
+
+### Pulses collapse or timing looks compressed
+- Use `queue_policy:=edges` for pulse/sequence.
+- Use `queue_policy:=fifo` for pattern playback.
+
+## Workshop Day Flow (Recommended)
+
+- 0:00-0:15 Setup checks and host-agent connectivity
+- 0:15-0:30 ROS graph basics (`node list`, `topic echo`, `/actuate`)
+- 0:30-0:50 Preset pattern playback and observation
+- 0:50-1:15 Pattern wizard + custom participant patterns
+- 1:15-1:30 Encoder/position patterns (`clock_tick`, `bounce_encoder`)
+- 1:30-1:45 Debugging lab (rescue paths)
+- 1:45-2:00 Share-out and next steps
+
+## Participant Fork/Clone Guidance
+
+Participants should fork (optional) and clone:
+
+```bash
+git clone https://github.com/<their-user>/spike-ros-workshop.git
+cd spike-ros-workshop
+```
+
+If no fork is needed, clone the workshop org repo directly.
+
+## Maintainer: Publish to GitHub
+
+If this repo is not initialized yet:
+
+```bash
+git init
+git add .
+git commit -m "Initial workshop packaging"
+```
+
+Set remote and push:
+
+```bash
+git remote add origin https://github.com/<your-org-or-user>/spike-ros-workshop.git
+git branch -M main
+git push -u origin main
+```
+
+If remote already exists, update URL:
+
+```bash
+git remote set-url origin https://github.com/<your-org-or-user>/spike-ros-workshop.git
+git push -u origin main
+```
+
+## Rename Folder (if your local folder is still `repo/`)
+
+From parent directory:
+
+```bash
+mv repo spike-ros-workshop
+cd spike-ros-workshop
+```
+
+All scripts/docs in this repository assume the folder name `spike-ros-workshop` in examples.
