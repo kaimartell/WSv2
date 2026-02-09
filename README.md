@@ -47,7 +47,8 @@ cd ..
 ```
 
 2. In another terminal window, start container:
-  This step may take a few minutes for the container to install all dependencies
+
+This step may take a few minutes for the container to install all dependencies
 ```bash
 ./scripts/start_container.sh
 ```
