@@ -55,12 +55,13 @@ USB auto-selection notes:
   - `./scripts/start_host_agent_usb.sh --dry-run`
   - Run outputted python3 command after DRY RUN:
 
-2. In another terminal window, start container:
 
-This step may take a few minutes for the container to install all dependencies
+2. In another terminal window, start container:
 ```bash
 ./scripts/start_container.sh
 ```
+This step may take a few minutes for the container to install all dependencies
+
 
 3. In container terminal #1, launch once (idle-ready):
 
@@ -68,11 +69,13 @@ This step may take a few minutes for the container to install all dependencies
 ros2 launch spike_workshop_instrument instrument.launch.py
 ```
 
+
 4. Open a third terminal window and enter the docker container with:
 
 ```bash
 docker exec -it spike-workshop-participant bash
 ```
+
 
 5. In this third terminal, verify connectivity:
 
