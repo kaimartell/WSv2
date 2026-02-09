@@ -2,11 +2,11 @@
 
 Build a physical instrument using ROS 2 and LEGO SPIKE Prime.
 
-This repository gives participants a ROS-first workshop flow:
+This repository gives participants ROS flow:
 - launch ROS once
 - keep the graph running
 - generate/list/play/stop patterns through ROS services
-- keep shareable YAML patterns on disk under `patterns/`
+- keep shareable YAML patterns under `patterns/`
 
 ## ROS
 
@@ -40,14 +40,14 @@ cd ..
 
 ## Start Guide
 
-1. Start host agent:
+1. Open terminal and start host agent:
 
 ```bash
 ./scripts/start_host_agent_usb.sh
 ```
 
-2. Start container:
-
+2. In another terminal window, start container:
+  This step may take a few minutes for the container to install all dependencies
 ```bash
 ./scripts/start_container.sh
 ```
