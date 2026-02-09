@@ -90,7 +90,7 @@ ros2 service call /instrument/play_pattern spike_workshop_interfaces/srv/PlayPat
 ros2 service call /instrument/stop std_srvs/srv/Trigger "{}"
 ```
 
-## Interactive Helper (Recommended)
+## Interactive Helper
 
 Inside container:
 
@@ -257,15 +257,6 @@ curl -s -X POST http://localhost:8000/sound/stop \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
-
-## Workshop Day Flow (Suggested)
-
-- 0:00-0:15 setup + health checks
-- 0:15-0:35 ROS graph + service calls
-- 0:35-0:55 pattern presets via `/instrument/play_pattern`
-- 0:55-1:20 pattern generation via service and `pattern_menu`
-- 1:20-1:40 encoder/position labs (`clock_tick`, `bounce_encoder`)
-- 1:40-2:00 debugging and share-out
 
 ## Participant Fork/Clone
 
