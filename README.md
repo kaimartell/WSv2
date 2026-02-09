@@ -38,13 +38,7 @@ cd ..
 1. Start host agent:
 
 ```bash
-./scripts/start_host_agent_usb.sh
-```
-
-Mock fallback:
-
-```bash
-SPIKE_BACKEND=mock ./scripts/start_host_agent_usb.sh
+./scripts/run.sh
 ```
 
 2. Start container:
