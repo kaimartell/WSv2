@@ -22,7 +22,7 @@ ROS graph:
 - Install Docker Desktop and start it: https://docs.docker.com/desktop/setup/install/mac-install/
   - Pay attention to Silicon vs Intel chip
   - Follow install instructions, can skip account creation
-  - Verify CLI install with
+  - Verify CLI install with (type into terminal)
   ```bash
   docker version
   ```
