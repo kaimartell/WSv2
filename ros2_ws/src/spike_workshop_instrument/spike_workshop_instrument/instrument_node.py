@@ -51,6 +51,7 @@ class InstrumentNode(Node):
                 ("seed", 0),
                 ("sequence_file", ""),
                 ("pattern_file", ""),
+                ("execution_mode", "host_score"),
                 ("allow_override", False),
                 ("cmd_topic", "/spike/cmd"),
                 ("action_topic", "/spike/action"),
@@ -75,6 +76,9 @@ class InstrumentNode(Node):
 
         self._play_pattern_srv = self.create_service(
             PlayPattern, "/instrument/play_pattern", self._on_play_pattern
+        )
+        self._play_score_srv = self.create_service(
+            PlayPattern, "/instrument/play_score", self._on_play_score
         )
         self._stop_srv = self.create_service(Trigger, "/instrument/stop", self._on_stop)
         self._list_patterns_srv = self.create_service(
@@ -109,11 +113,23 @@ class InstrumentNode(Node):
         self._spike_state_value = "unknown"
         self._spike_state_counter = 0
         self._spike_state_last_update_monotonic = 0.0
+        self._score_state_counter = 0
+        self._score_playing = False
+        self._score_status_ok = False
+        self._score_current_index = 0
+        self._score_total_events = 0
+        self._score_start_time_monotonic = 0.0
+        self._score_expected_end_monotonic = 0.0
+        self._score_last_error = ""
         self._active_pattern_path = ""
 
         self._safe_log(
             "info",
-            "instrument_node ready. Services: /instrument/list_patterns, /instrument/generate_score, /instrument/generate_pattern, /instrument/play_pattern, /instrument/stop",
+            (
+                "instrument_node ready. Services: /instrument/list_patterns, "
+                "/instrument/generate_score, /instrument/generate_pattern, "
+                "/instrument/play_pattern, /instrument/play_score, /instrument/stop"
+            ),
         )
         self._safe_log(
             "info",
@@ -136,6 +152,12 @@ class InstrumentNode(Node):
             logger.error(message)
         else:
             logger.info(message)
+
+    def _execution_mode(self) -> str:
+        raw = str(self.get_parameter("execution_mode").value).strip().lower()
+        if raw not in {"stream", "host_score"}:
+            return "host_score"
+        return raw
 
     def _pattern_roots(self) -> List[Tuple[str, Path]]:
         return [
@@ -241,12 +263,14 @@ class InstrumentNode(Node):
             self._stop_event.clear()
             self._running = True
             self._last_action = f"starting {run_label}"
+            self._score_last_error = ""
         self._publish_status()
         return True, "accepted"
 
     def _publish_best_effort_stop(self) -> None:
         if not self._context_ok():
             return
+        self._publish_action({"type": "score_stop"}, log_command=False)
         self._publish_action({"type": "stop"}, log_command=False)
         self._publish_motor_command(speed=0.0, duration=0.0, log_command=False)
 
@@ -271,6 +295,10 @@ class InstrumentNode(Node):
             self._worker = None
             self._active_pattern_path = ""
             self._last_action = f"stopped ({reason})"
+            self._score_playing = False
+            self._score_status_ok = False
+            self._score_current_index = 0
+            self._score_total_events = 0
 
         self._publish_best_effort_stop()
         self._publish_status()
@@ -384,6 +412,33 @@ class InstrumentNode(Node):
         request: PlayPattern.Request,
         response: PlayPattern.Response,
     ) -> PlayPattern.Response:
+        return self._start_pattern_playback(
+            request=request,
+            response=response,
+            force_host_score=False,
+            service_name="play_pattern",
+        )
+
+    def _on_play_score(
+        self,
+        request: PlayPattern.Request,
+        response: PlayPattern.Response,
+    ) -> PlayPattern.Response:
+        return self._start_pattern_playback(
+            request=request,
+            response=response,
+            force_host_score=True,
+            service_name="play_score",
+        )
+
+    def _start_pattern_playback(
+        self,
+        *,
+        request: PlayPattern.Request,
+        response: PlayPattern.Response,
+        force_host_score: bool,
+        service_name: str,
+    ) -> PlayPattern.Response:
         allow_override = bool(self.get_parameter("allow_override").value)
 
         try:
@@ -411,7 +466,7 @@ class InstrumentNode(Node):
         self._start_worker(
             self._run_pattern_from_path,
             name="instrument_pattern_worker",
-            args=(resolved, "service"),
+            args=(resolved, f"service:{service_name}", force_host_score),
         )
 
         response.accepted = True
@@ -645,7 +700,309 @@ class InstrumentNode(Node):
     def _coerce_speed(value: Any) -> float:
         return max(-1.0, min(1.0, float(value)))
 
-    def _run_pattern_from_path(self, resolved: Path, source: str) -> None:
+    def _pattern_to_host_score_events(
+        self, pattern: Dict[str, Any]
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        steps = list(pattern.get("steps", []))
+        events: List[Dict[str, Any]] = []
+        timeline_ms = 0
+        event_index = 0
+
+        def add_event(t_rel_ms: int, action: Dict[str, Any]) -> None:
+            nonlocal event_index
+            event_index += 1
+            events.append(
+                {
+                    "event_id": f"evt_{event_index:04d}",
+                    "t_rel_ms": int(max(0, t_rel_ms)),
+                    "action": action,
+                }
+            )
+
+        for step in steps:
+            step_type = str(step.get("type", "")).strip().lower()
+            gap_sec = max(0.0, float(step.get("gap_sec", 0.0)))
+            wait_override = self._optional_nonnegative_float(step.get("wait_sec"))
+            port = str(step.get("port", "A")).strip().upper() or "A"
+            stop_action = str(step.get("stop_action", "coast")).strip().lower() or "coast"
+
+            if step_type == "sleep":
+                timeline_ms += int(round(max(0.0, float(step.get("duration_sec", 0.0))) * 1000.0))
+                timeline_ms += int(round(gap_sec * 1000.0))
+                continue
+
+            if step_type == "run_for_time":
+                duration_sec = max(0.0, float(step.get("duration_sec", 0.0)))
+                speed = self._coerce_speed(step.get("velocity", 0.0))
+                add_event(
+                    timeline_ms,
+                    {
+                        "type": "run",
+                        "port": port,
+                        "speed": float(speed),
+                    },
+                )
+                timeline_ms += int(round(duration_sec * 1000.0))
+                add_event(
+                    timeline_ms,
+                    {
+                        "type": "stop",
+                        "port": port,
+                        "stop_action": stop_action,
+                    },
+                )
+                if wait_override is not None:
+                    timeline_ms += int(round(wait_override * 1000.0))
+                timeline_ms += int(round(gap_sec * 1000.0))
+                continue
+
+            if step_type == "beep":
+                freq_hz = int(step.get("freq_hz", 440))
+                duration_ms = int(step.get("duration_ms", 120))
+                volume = int(step.get("volume", 50))
+                add_event(
+                    timeline_ms,
+                    {
+                        "type": "beep",
+                        "freq_hz": freq_hz,
+                        "duration_ms": duration_ms,
+                        "volume": volume,
+                    },
+                )
+                wait_after_sec = (
+                    wait_override
+                    if wait_override is not None
+                    else max(0.0, float(duration_ms) / 1000.0)
+                )
+                timeline_ms += int(round(wait_after_sec * 1000.0))
+                timeline_ms += int(round(gap_sec * 1000.0))
+                continue
+
+            if step_type in {"run", "set_duty_cycle"}:
+                add_event(
+                    timeline_ms,
+                    {
+                        "type": "run" if step_type == "run" else "set_duty_cycle",
+                        "port": port,
+                        "speed": float(self._coerce_speed(step.get("velocity", 0.0))),
+                    },
+                )
+                if wait_override is not None:
+                    timeline_ms += int(round(wait_override * 1000.0))
+                timeline_ms += int(round(gap_sec * 1000.0))
+                continue
+
+            if step_type == "stop":
+                add_event(
+                    timeline_ms,
+                    {
+                        "type": "stop",
+                        "port": port,
+                        "stop_action": stop_action,
+                    },
+                )
+                if wait_override is not None:
+                    timeline_ms += int(round(wait_override * 1000.0))
+                timeline_ms += int(round(gap_sec * 1000.0))
+                continue
+
+            action_payload: Dict[str, Any] = {
+                "type": step_type,
+                "port": port,
+                "stop_action": stop_action,
+            }
+            if step_type in {
+                "run_for_degrees",
+                "run_to_absolute_position",
+                "run_to_relative_position",
+                "set_duty_cycle",
+            }:
+                action_payload["speed"] = float(self._coerce_speed(step.get("velocity", 0.0)))
+            if step_type in {"run_for_degrees", "run_to_relative_position"}:
+                action_payload["degrees"] = int(step.get("degrees", 0))
+            if step_type == "run_to_absolute_position":
+                action_payload["position_degrees"] = int(step.get("position_degrees", 0))
+            add_event(timeline_ms, action_payload)
+
+            if wait_override is not None:
+                timeline_ms += int(round(wait_override * 1000.0))
+            else:
+                timeline_ms += int(
+                    round(DEFAULT_BLOCKING_WAIT_SEC.get(step_type, 0.4) * 1000.0)
+                )
+            timeline_ms += int(round(gap_sec * 1000.0))
+
+        events.sort(key=lambda row: int(row.get("t_rel_ms", 0)))
+        return events, timeline_ms
+
+    def _run_pattern_via_host_score(
+        self,
+        *,
+        pattern: Dict[str, Any],
+        resolved: Path,
+        source: str,
+    ) -> None:
+        events, expected_length_ms = self._pattern_to_host_score_events(pattern)
+        if not events:
+            self._safe_log("warning", f"Pattern {resolved} has no executable events for host_score mode")
+            with self._lock:
+                self._running = False
+                self._worker = None
+                self._active_pattern_path = ""
+                self._last_action = "idle"
+            self._publish_status()
+            return
+
+        score_counter_before = self._get_score_status_counter()
+        start_monotonic = time.monotonic() + 0.05
+        expected_end_monotonic = start_monotonic + (expected_length_ms / 1000.0)
+
+        payload = {
+            "type": "score_play",
+            "score": {
+                "port": "A",
+                "events": events,
+                "start_mode": "at_time",
+                "start_time_ms": 50,
+            },
+        }
+        if not self._publish_action(payload):
+            self._safe_log("error", f"Failed to publish score_play for {resolved}")
+            with self._lock:
+                self._running = False
+                self._worker = None
+                self._active_pattern_path = ""
+                self._last_action = "score_play publish failed"
+            self._publish_status()
+            return
+
+        self._safe_log(
+            "info",
+            (
+                f"Host-scheduled score started for pattern={resolved.name} source={source}; "
+                f"events={len(events)} expected_length_ms={expected_length_ms}"
+            ),
+        )
+        with self._lock:
+            self._score_playing = True
+            self._score_status_ok = False
+            self._score_current_index = 0
+            self._score_total_events = len(events)
+            self._score_start_time_monotonic = start_monotonic
+            self._score_expected_end_monotonic = expected_end_monotonic
+            self._score_last_error = ""
+            self._last_action = f"host_score started events={len(events)}"
+        self._publish_status()
+
+        deadline = expected_end_monotonic + 12.0
+        seen_score_status = False
+        invalid_score_status_count = 0
+        invalid_status_warned = False
+        remote_started = False
+        success = False
+
+        while not self._stop_event.is_set():
+            with self._lock:
+                counter_now = self._score_state_counter
+                remote_playing = self._score_playing
+                remote_status_ok = self._score_status_ok
+                remote_current_index = self._score_current_index
+                remote_total_events = self._score_total_events
+                remote_error = self._score_last_error
+
+            if counter_now > score_counter_before:
+                seen_score_status = True
+                if not remote_status_ok:
+                    invalid_score_status_count += 1
+                    if remote_started and invalid_score_status_count >= 3:
+                        if not invalid_status_warned:
+                            self._safe_log(
+                                "warning",
+                                (
+                                    "Host score status became invalid while waiting for completion: "
+                                    f"{remote_error or 'unknown status error'}; "
+                                    "continuing to wait for recovery until deadline."
+                                ),
+                            )
+                            invalid_status_warned = True
+                        time.sleep(0.05)
+                        continue
+                else:
+                    invalid_score_status_count = 0
+                    invalid_status_warned = False
+                    if (not remote_started) and (remote_playing or remote_current_index > 0):
+                        remote_started = True
+                        self._safe_log(
+                            "info",
+                            (
+                                "Host score acknowledged start: "
+                                f"current_index={remote_current_index}, "
+                                f"total_events={remote_total_events}, "
+                                f"playing={str(remote_playing).lower()}"
+                            ),
+                        )
+                    if not remote_started:
+                        time.sleep(0.05)
+                        continue
+                    if not remote_playing:
+                        success = (
+                            (remote_total_events > 0)
+                            and (remote_current_index >= remote_total_events)
+                            and (not bool(remote_error))
+                        )
+                        if not success:
+                            self._safe_log(
+                                "warning",
+                                (
+                                    "Host score ended without full completion: "
+                                    f"current_index={remote_current_index}, "
+                                    f"total_events={remote_total_events}, "
+                                    f"last_error={remote_error or '<none>'}"
+                                ),
+                            )
+                        break
+
+            if time.monotonic() > deadline:
+                self._safe_log(
+                    "warning",
+                    (
+                        f"Timed out waiting for host_score completion for {resolved.name}; "
+                        "falling back to local completion handling."
+                    ),
+                )
+                break
+            time.sleep(0.05)
+
+        if self._stop_event.is_set():
+            self._publish_action({"type": "score_stop"}, log_command=False)
+            success = False
+
+        if success and seen_score_status and self._context_ok():
+            try:
+                self._done_pub.publish(Empty())
+                self._safe_log("info", "Host-scheduled pattern complete; published /done")
+            except Exception:  # noqa: BLE001
+                pass
+
+        with self._lock:
+            self._running = False
+            self._worker = None
+            self._active_pattern_path = ""
+            self._score_playing = False
+            self._score_status_ok = False
+            self._score_current_index = 0
+            self._score_total_events = 0
+            self._last_action = "idle" if success else "host_score finished with warning"
+
+        self._publish_best_effort_stop()
+        self._publish_status()
+
+    def _run_pattern_from_path(
+        self,
+        resolved: Path,
+        source: str,
+        force_host_score: bool = False,
+    ) -> None:
         try:
             pattern = load_and_validate_pattern(str(resolved))
         except Exception as exc:  # noqa: BLE001
@@ -664,6 +1021,15 @@ class InstrumentNode(Node):
             "info",
             f"Executing pattern={pattern_name} from {resolved} source={source} with {len(steps)} steps",
         )
+
+        execution_mode = "host_score" if force_host_score else self._execution_mode()
+        if execution_mode == "host_score":
+            self._run_pattern_via_host_score(
+                pattern=pattern,
+                resolved=resolved,
+                source=source,
+            )
+            return
 
         success = True
         for index, step in enumerate(steps, start=1):
@@ -866,11 +1232,33 @@ class InstrumentNode(Node):
         except json.JSONDecodeError:
             return
         state = str(payload.get("state", "")).strip().lower()
+        score = payload.get("score")
         with self._lock:
             self._host_connected = state not in {"", "unreachable"}
             self._spike_state_value = state or "unknown"
             self._spike_state_counter += 1
             self._spike_state_last_update_monotonic = time.monotonic()
+            if isinstance(score, dict):
+                self._score_state_counter += 1
+                self._score_status_ok = bool(score.get("ok", False))
+                self._score_playing = bool(score.get("playing", False))
+                self._score_current_index = int(
+                    score.get("current_index", self._score_current_index)
+                )
+                self._score_total_events = int(
+                    score.get("total_events", self._score_total_events)
+                )
+                self._score_start_time_monotonic = float(
+                    score.get("start_time_monotonic", self._score_start_time_monotonic)
+                )
+                self._score_expected_end_monotonic = float(
+                    score.get("expected_end_monotonic", self._score_expected_end_monotonic)
+                )
+                if not self._score_status_ok:
+                    score_error = str(score.get("error", "") or "")
+                    self._score_last_error = score_error or "score status unavailable"
+                else:
+                    self._score_last_error = str(score.get("last_error", "") or "")
 
     @staticmethod
     def _optional_nonnegative_float(value: Any) -> Optional[float]:
@@ -899,6 +1287,10 @@ class InstrumentNode(Node):
     def _get_spike_state_counter(self) -> int:
         with self._lock:
             return self._spike_state_counter
+
+    def _get_score_status_counter(self) -> int:
+        with self._lock:
+            return self._score_state_counter
 
     def _wait_for_step_idle_or_default(
         self,
@@ -970,6 +1362,7 @@ class InstrumentNode(Node):
             "seed": int(self.get_parameter("seed").value),
             "sequence_file": str(self.get_parameter("sequence_file").value),
             "pattern_file": str(self.get_parameter("pattern_file").value),
+            "execution_mode": str(self.get_parameter("execution_mode").value),
         }
 
     def _publish_motor_command(
@@ -1007,12 +1400,26 @@ class InstrumentNode(Node):
             last_action = self._last_action
             host_connected = self._host_connected
             active_pattern_path = self._active_pattern_path
+            score_playing = self._score_playing
+            score_status_ok = self._score_status_ok
+            score_current_index = self._score_current_index
+            score_total_events = self._score_total_events
+            score_start = self._score_start_time_monotonic
+            score_expected_end = self._score_expected_end_monotonic
+            score_last_error = self._score_last_error
 
         return (
             f"state={state};last_action={last_action};"
             f"participant_id={int(self.get_parameter('participant_id').value)};"
             f"name={str(self.get_parameter('name').value)};"
             f"mode={str(self.get_parameter('mode').value)};"
+            f"execution_mode={self._execution_mode()};"
+            f"playing={str(score_playing).lower()};"
+            f"score_status_ok={str(score_status_ok).lower()};"
+            f"score_progress={score_current_index}/{score_total_events};"
+            f"start_time_monotonic={score_start:.3f};"
+            f"expected_end_monotonic={score_expected_end:.3f};"
+            f"last_error={score_last_error};"
             f"active_pattern={active_pattern_path};"
             f"host_connected={str(host_connected).lower()}"
         )

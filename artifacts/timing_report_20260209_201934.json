@@ -1,0 +1,1038 @@
+{
+  "generated_at_unix": 1770686331.766741,
+  "base_url": "http://127.0.0.1:8000",
+  "trials": 1,
+  "cases": [
+    {
+      "name": "motor_only_120bpm_2bars",
+      "stream": {
+        "trials": [
+          {
+            "event_count": 20,
+            "delta_ms": {
+              "count": 20.0,
+              "mean": 1169.7217434033519,
+              "p95": 1767.5032329949317,
+              "max": 1782.0767079829238
+            },
+            "pair_delta_ms": {
+              "count": 4.0,
+              "mean": 477.5847812416032,
+              "p95": 481.1379580089124,
+              "max": 481.55920795397833
+            },
+            "recent_events": [
+              {
+                "event_id": "evt_0001",
+                "event_type": "run",
+                "scheduled": 486080.3043895,
+                "actual": 486080.304862291,
+                "delta_ms": 0.47279102727770805,
+                "pair_key": "t0",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0002",
+                "event_type": "stop",
+                "scheduled": 486080.8043895,
+                "actual": 486080.805487166,
+                "delta_ms": 1.0976659832522273,
+                "pair_key": "t500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0003",
+                "event_type": "stop",
+                "scheduled": 486080.8043895,
+                "actual": 486081.280718083,
+                "delta_ms": 476.3285830267705,
+                "pair_key": "t500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0004",
+                "event_type": "run",
+                "scheduled": 486081.3043895,
+                "actual": 486081.761879625,
+                "delta_ms": 457.49012497253716,
+                "pair_key": "t1000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0005",
+                "event_type": "stop",
+                "scheduled": 486081.8043895,
+                "actual": 486082.247081916,
+                "delta_ms": 442.69241602160037,
+                "pair_key": "t1500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0006",
+                "event_type": "stop",
+                "scheduled": 486081.8043895,
+                "actual": 486082.721880041,
+                "delta_ms": 917.4905410036445,
+                "pair_key": "t1500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0007",
+                "event_type": "run",
+                "scheduled": 486082.3043895,
+                "actual": 486083.20032875,
+                "delta_ms": 895.9392500109971,
+                "pair_key": "t2000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0008",
+                "event_type": "stop",
+                "scheduled": 486082.8043895,
+                "actual": 486083.678707208,
+                "delta_ms": 874.3177080177702,
+                "pair_key": "t2500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0009",
+                "event_type": "stop",
+                "scheduled": 486082.8043895,
+                "actual": 486084.160266416,
+                "delta_ms": 1355.8769159717485,
+                "pair_key": "t2500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0010",
+                "event_type": "run",
+                "scheduled": 486083.3043895,
+                "actual": 486084.63095675,
+                "delta_ms": 1326.5672500128858,
+                "pair_key": "t3000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0011",
+                "event_type": "stop",
+                "scheduled": 486083.8043895,
+                "actual": 486085.107715333,
+                "delta_ms": 1303.3258329960518,
+                "pair_key": "t3500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0012",
+                "event_type": "stop",
+                "scheduled": 486083.8043895,
+                "actual": 486085.586466208,
+                "delta_ms": 1782.0767079829238,
+                "pair_key": "t3500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0013",
+                "event_type": "stop",
+                "scheduled": 486084.3043895,
+                "actual": 486086.071125708,
+                "delta_ms": 1766.7362079955637,
+                "pair_key": "t4000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0014",
+                "event_type": "stop",
+                "scheduled": 486084.8043895,
+                "actual": 486086.549928583,
+                "delta_ms": 1745.5390829709359,
+                "pair_key": "t4500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0015",
+                "event_type": "stop",
+                "scheduled": 486085.3043895,
+                "actual": 486087.023898666,
+                "delta_ms": 1719.509166025091,
+                "pair_key": "t5000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0016",
+                "event_type": "stop",
+                "scheduled": 486085.8043895,
+                "actual": 486087.505242625,
+                "delta_ms": 1700.853125017602,
+                "pair_key": "t5500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0017",
+                "event_type": "stop",
+                "scheduled": 486086.3043895,
+                "actual": 486087.988539583,
+                "delta_ms": 1684.1500829905272,
+                "pair_key": "t6000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0018",
+                "event_type": "stop",
+                "scheduled": 486086.8043895,
+                "actual": 486088.47136775,
+                "delta_ms": 1666.9782500248402,
+                "pair_key": "t6500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0019",
+                "event_type": "stop",
+                "scheduled": 486087.3043895,
+                "actual": 486088.953068458,
+                "delta_ms": 1648.6789580085315,
+                "pair_key": "t7000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0020",
+                "event_type": "stop",
+                "scheduled": 486087.8043895,
+                "actual": 486089.432703708,
+                "delta_ms": 1628.3142080064863,
+                "pair_key": "t7500",
+                "accepted": true,
+                "error": ""
+              }
+            ]
+          }
+        ],
+        "summary": {
+          "delta_ms": {
+            "count": 1.0,
+            "mean": 1767.5032329949317,
+            "p95": 1767.5032329949317,
+            "max": 1767.5032329949317
+          },
+          "pair_delta_ms": {
+            "count": 1.0,
+            "mean": 481.1379580089124,
+            "p95": 481.1379580089124,
+            "max": 481.1379580089124
+          }
+        }
+      },
+      "host_score": {
+        "trials": [
+          {
+            "error": "HTTP 404",
+            "ok": false
+          }
+        ],
+        "summary": {
+          "delta_ms": {
+            "count": 1.0,
+            "mean": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "pair_delta_ms": {
+            "count": 1.0,
+            "mean": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          }
+        }
+      },
+      "recommendation": "host_score improves p95 by 1767.50 ms"
+    },
+    {
+      "name": "melody_only_120bpm",
+      "stream": {
+        "trials": [
+          {
+            "event_count": 32,
+            "delta_ms": {
+              "count": 32.0,
+              "mean": 3686.3700586545747,
+              "p95": 6913.693735608831,
+              "max": 7391.350292018615
+            },
+            "pair_delta_ms": {
+              "count": 16.0,
+              "mean": 482.08109106781194,
+              "p95": 487.2173020266928,
+              "max": 489.647833048366
+            },
+            "recent_events": [
+              {
+                "event_id": "evt_0001",
+                "event_type": "stop",
+                "scheduled": 486090.522081208,
+                "actual": 486090.522215,
+                "delta_ms": 0.13379199663177133,
+                "pair_key": "t0",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0002",
+                "event_type": "beep",
+                "scheduled": 486090.522081208,
+                "actual": 486091.0071505,
+                "delta_ms": 485.06929201539606,
+                "pair_key": "t0",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0003",
+                "event_type": "stop",
+                "scheduled": 486091.022081208,
+                "actual": 486091.484695,
+                "delta_ms": 462.6137919840403,
+                "pair_key": "t500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0004",
+                "event_type": "beep",
+                "scheduled": 486091.022081208,
+                "actual": 486091.967343166,
+                "delta_ms": 945.2619579969905,
+                "pair_key": "t500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0005",
+                "event_type": "stop",
+                "scheduled": 486091.522081208,
+                "actual": 486092.442677833,
+                "delta_ms": 920.5966250156052,
+                "pair_key": "t1000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0006",
+                "event_type": "beep",
+                "scheduled": 486091.522081208,
+                "actual": 486092.925230333,
+                "delta_ms": 1403.1491249916144,
+                "pair_key": "t1000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0007",
+                "event_type": "stop",
+                "scheduled": 486092.022081208,
+                "actual": 486093.403924708,
+                "delta_ms": 1381.8435000139289,
+                "pair_key": "t1500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0008",
+                "event_type": "beep",
+                "scheduled": 486092.022081208,
+                "actual": 486093.887109041,
+                "delta_ms": 1865.0278329732828,
+                "pair_key": "t1500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0009",
+                "event_type": "stop",
+                "scheduled": 486092.522081208,
+                "actual": 486094.368154,
+                "delta_ms": 1846.0727920173667,
+                "pair_key": "t2000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0010",
+                "event_type": "beep",
+                "scheduled": 486092.522081208,
+                "actual": 486094.848993625,
+                "delta_ms": 2326.9124170183204,
+                "pair_key": "t2000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0011",
+                "event_type": "stop",
+                "scheduled": 486093.022081208,
+                "actual": 486095.315397583,
+                "delta_ms": 2293.3163749985397,
+                "pair_key": "t2500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0012",
+                "event_type": "beep",
+                "scheduled": 486093.022081208,
+                "actual": 486095.792653208,
+                "delta_ms": 2770.572000008542,
+                "pair_key": "t2500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0013",
+                "event_type": "stop",
+                "scheduled": 486093.522081208,
+                "actual": 486096.271640541,
+                "delta_ms": 2749.559332965873,
+                "pair_key": "t3000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0014",
+                "event_type": "beep",
+                "scheduled": 486093.522081208,
+                "actual": 486096.756471458,
+                "delta_ms": 3234.3902499997057,
+                "pair_key": "t3000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0015",
+                "event_type": "stop",
+                "scheduled": 486094.022081208,
+                "actual": 486097.2380085,
+                "delta_ms": 3215.927292010747,
+                "pair_key": "t3500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0016",
+                "event_type": "beep",
+                "scheduled": 486094.022081208,
+                "actual": 486097.716659208,
+                "delta_ms": 3694.57799999509,
+                "pair_key": "t3500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0017",
+                "event_type": "stop",
+                "scheduled": 486094.522081208,
+                "actual": 486098.18864875,
+                "delta_ms": 3666.5675420081243,
+                "pair_key": "t4000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0018",
+                "event_type": "beep",
+                "scheduled": 486094.522081208,
+                "actual": 486098.669493875,
+                "delta_ms": 4147.41266699275,
+                "pair_key": "t4000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0019",
+                "event_type": "stop",
+                "scheduled": 486095.022081208,
+                "actual": 486099.147961625,
+                "delta_ms": 4125.880417006556,
+                "pair_key": "t4500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0020",
+                "event_type": "beep",
+                "scheduled": 486095.022081208,
+                "actual": 486099.63010825,
+                "delta_ms": 4608.027042006142,
+                "pair_key": "t4500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0021",
+                "event_type": "stop",
+                "scheduled": 486095.522081208,
+                "actual": 486100.107918666,
+                "delta_ms": 4585.837457969319,
+                "pair_key": "t5000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0022",
+                "event_type": "beep",
+                "scheduled": 486095.522081208,
+                "actual": 486100.585682291,
+                "delta_ms": 5063.6010830057785,
+                "pair_key": "t5000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0023",
+                "event_type": "stop",
+                "scheduled": 486096.022081208,
+                "actual": 486101.071605,
+                "delta_ms": 5049.523791996762,
+                "pair_key": "t5500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0024",
+                "event_type": "beep",
+                "scheduled": 486096.022081208,
+                "actual": 486101.552684291,
+                "delta_ms": 5530.603082966991,
+                "pair_key": "t5500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0025",
+                "event_type": "stop",
+                "scheduled": 486096.522081208,
+                "actual": 486102.035666916,
+                "delta_ms": 5513.585707987659,
+                "pair_key": "t6000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0026",
+                "event_type": "beep",
+                "scheduled": 486096.522081208,
+                "actual": 486102.516834333,
+                "delta_ms": 5994.753125007264,
+                "pair_key": "t6000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0027",
+                "event_type": "stop",
+                "scheduled": 486097.022081208,
+                "actual": 486102.996210791,
+                "delta_ms": 5974.129582988098,
+                "pair_key": "t6500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0028",
+                "event_type": "beep",
+                "scheduled": 486097.022081208,
+                "actual": 486103.475553833,
+                "delta_ms": 6453.47262499854,
+                "pair_key": "t6500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0029",
+                "event_type": "stop",
+                "scheduled": 486097.522081208,
+                "actual": 486103.95682225,
+                "delta_ms": 6434.741041972302,
+                "pair_key": "t7000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0030",
+                "event_type": "beep",
+                "scheduled": 486097.522081208,
+                "actual": 486104.446470083,
+                "delta_ms": 6924.388875020668,
+                "pair_key": "t7000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0031",
+                "event_type": "stop",
+                "scheduled": 486098.022081208,
+                "actual": 486104.927024375,
+                "delta_ms": 6904.943166999146,
+                "pair_key": "t7500",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0032",
+                "event_type": "beep",
+                "scheduled": 486098.022081208,
+                "actual": 486105.4134315,
+                "delta_ms": 7391.350292018615,
+                "pair_key": "t7500",
+                "accepted": true,
+                "error": ""
+              }
+            ]
+          }
+        ],
+        "summary": {
+          "delta_ms": {
+            "count": 1.0,
+            "mean": 6913.693735608831,
+            "p95": 6913.693735608831,
+            "max": 6913.693735608831
+          },
+          "pair_delta_ms": {
+            "count": 1.0,
+            "mean": 487.2173020266928,
+            "p95": 487.2173020266928,
+            "max": 487.2173020266928
+          }
+        }
+      },
+      "host_score": {
+        "trials": [
+          {
+            "error": "HTTP 404",
+            "ok": false
+          }
+        ],
+        "summary": {
+          "delta_ms": {
+            "count": 1.0,
+            "mean": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "pair_delta_ms": {
+            "count": 1.0,
+            "mean": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          }
+        }
+      },
+      "recommendation": "host_score improves p95 by 6913.69 ms"
+    },
+    {
+      "name": "combined_90bpm",
+      "stream": {
+        "trials": [
+          {
+            "event_count": 32,
+            "delta_ms": {
+              "count": 32.0,
+              "mean": 2455.4398973923526,
+              "p95": 4509.60404825164,
+              "max": 4902.0067090168595
+            },
+            "pair_delta_ms": {
+              "count": 16.0,
+              "mean": 480.2797108714003,
+              "p95": 484.3225104850717,
+              "max": 484.8231669748202
+            },
+            "recent_events": [
+              {
+                "event_id": "evt_0001",
+                "event_type": "run",
+                "scheduled": 486106.507006666,
+                "actual": 486106.507754458,
+                "delta_ms": 0.7477920153178275,
+                "pair_key": "t0",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0003",
+                "event_type": "beep",
+                "scheduled": 486106.507006666,
+                "actual": 486106.991910083,
+                "delta_ms": 484.9034170038067,
+                "pair_key": "t0",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0002",
+                "event_type": "stop",
+                "scheduled": 486107.174006666,
+                "actual": 486107.474712,
+                "delta_ms": 300.7053339970298,
+                "pair_key": "t667",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0004",
+                "event_type": "stop",
+                "scheduled": 486107.174006666,
+                "actual": 486107.957721541,
+                "delta_ms": 783.7148749968037,
+                "pair_key": "t667",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0005",
+                "event_type": "run",
+                "scheduled": 486107.84000666597,
+                "actual": 486108.432892416,
+                "delta_ms": 592.8857500548474,
+                "pair_key": "t1333",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0007",
+                "event_type": "beep",
+                "scheduled": 486107.84000666597,
+                "actual": 486108.912397166,
+                "delta_ms": 1072.3905000486411,
+                "pair_key": "t1333",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0006",
+                "event_type": "stop",
+                "scheduled": 486108.507006666,
+                "actual": 486109.396475458,
+                "delta_ms": 889.46879201103,
+                "pair_key": "t2000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0008",
+                "event_type": "stop",
+                "scheduled": 486108.507006666,
+                "actual": 486109.878724083,
+                "delta_ms": 1371.7174170305952,
+                "pair_key": "t2000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0009",
+                "event_type": "run",
+                "scheduled": 486109.174006666,
+                "actual": 486110.360568375,
+                "delta_ms": 1186.561708978843,
+                "pair_key": "t2667",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0011",
+                "event_type": "beep",
+                "scheduled": 486109.174006666,
+                "actual": 486110.838930291,
+                "delta_ms": 1664.9236250086688,
+                "pair_key": "t2667",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0010",
+                "event_type": "stop",
+                "scheduled": 486109.84000666597,
+                "actual": 486111.315314916,
+                "delta_ms": 1475.3082500537857,
+                "pair_key": "t3333",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0012",
+                "event_type": "stop",
+                "scheduled": 486109.84000666597,
+                "actual": 486111.797257791,
+                "delta_ms": 1957.2511250153184,
+                "pair_key": "t3333",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0013",
+                "event_type": "run",
+                "scheduled": 486110.507006666,
+                "actual": 486112.278378416,
+                "delta_ms": 1771.3717500446364,
+                "pair_key": "t4000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0015",
+                "event_type": "beep",
+                "scheduled": 486110.507006666,
+                "actual": 486112.755598958,
+                "delta_ms": 2248.5922920168377,
+                "pair_key": "t4000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0014",
+                "event_type": "stop",
+                "scheduled": 486111.174006666,
+                "actual": 486113.239255958,
+                "delta_ms": 2065.249292005319,
+                "pair_key": "t4667",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0016",
+                "event_type": "stop",
+                "scheduled": 486111.174006666,
+                "actual": 486113.717639666,
+                "delta_ms": 2543.6329999938607,
+                "pair_key": "t4667",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0017",
+                "event_type": "run",
+                "scheduled": 486111.84000666597,
+                "actual": 486114.201003166,
+                "delta_ms": 2360.996500006877,
+                "pair_key": "t5333",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0019",
+                "event_type": "beep",
+                "scheduled": 486111.84000666597,
+                "actual": 486114.681235416,
+                "delta_ms": 2841.2287500104867,
+                "pair_key": "t5333",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0018",
+                "event_type": "stop",
+                "scheduled": 486112.507006666,
+                "actual": 486115.161004625,
+                "delta_ms": 2653.9979590452276,
+                "pair_key": "t6000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0020",
+                "event_type": "stop",
+                "scheduled": 486112.507006666,
+                "actual": 486115.640425708,
+                "delta_ms": 3133.419042045716,
+                "pair_key": "t6000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0021",
+                "event_type": "run",
+                "scheduled": 486113.174006666,
+                "actual": 486116.1244655,
+                "delta_ms": 2950.4588340059854,
+                "pair_key": "t6667",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0023",
+                "event_type": "beep",
+                "scheduled": 486113.174006666,
+                "actual": 486116.605242333,
+                "delta_ms": 3431.2356670270674,
+                "pair_key": "t6667",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0022",
+                "event_type": "stop",
+                "scheduled": 486113.84000666597,
+                "actual": 486117.090474333,
+                "delta_ms": 3250.4676670068875,
+                "pair_key": "t7333",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0024",
+                "event_type": "stop",
+                "scheduled": 486113.84000666597,
+                "actual": 486117.566772291,
+                "delta_ms": 3726.765625004191,
+                "pair_key": "t7333",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0025",
+                "event_type": "run",
+                "scheduled": 486114.507006666,
+                "actual": 486118.051553666,
+                "delta_ms": 3544.547000026796,
+                "pair_key": "t8000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0027",
+                "event_type": "beep",
+                "scheduled": 486114.507006666,
+                "actual": 486118.536376833,
+                "delta_ms": 4029.370167001616,
+                "pair_key": "t8000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0026",
+                "event_type": "stop",
+                "scheduled": 486115.174006666,
+                "actual": 486119.013620791,
+                "delta_ms": 3839.6141250268556,
+                "pair_key": "t8667",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0028",
+                "event_type": "stop",
+                "scheduled": 486115.174006666,
+                "actual": 486119.496366208,
+                "delta_ms": 4322.359542013146,
+                "pair_key": "t8667",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0029",
+                "event_type": "run",
+                "scheduled": 486115.84000666597,
+                "actual": 486119.979680916,
+                "delta_ms": 4139.674250036478,
+                "pair_key": "t9333",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0031",
+                "event_type": "beep",
+                "scheduled": 486115.84000666597,
+                "actual": 486120.455770958,
+                "delta_ms": 4615.764292015228,
+                "pair_key": "t9333",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0030",
+                "event_type": "stop",
+                "scheduled": 486116.507006666,
+                "actual": 486120.929752333,
+                "delta_ms": 4422.745666990522,
+                "pair_key": "t10000",
+                "accepted": true,
+                "error": ""
+              },
+              {
+                "event_id": "evt_0032",
+                "event_type": "stop",
+                "scheduled": 486116.507006666,
+                "actual": 486121.409013375,
+                "delta_ms": 4902.0067090168595,
+                "pair_key": "t10000",
+                "accepted": true,
+                "error": ""
+              }
+            ]
+          }
+        ],
+        "summary": {
+          "delta_ms": {
+            "count": 1.0,
+            "mean": 4509.60404825164,
+            "p95": 4509.60404825164,
+            "max": 4509.60404825164
+          },
+          "pair_delta_ms": {
+            "count": 1.0,
+            "mean": 484.3225104850717,
+            "p95": 484.3225104850717,
+            "max": 484.3225104850717
+          }
+        }
+      },
+      "host_score": {
+        "trials": [
+          {
+            "error": "HTTP 404",
+            "ok": false
+          }
+        ],
+        "summary": {
+          "delta_ms": {
+            "count": 1.0,
+            "mean": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "pair_delta_ms": {
+            "count": 1.0,
+            "mean": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          }
+        }
+      },
+      "recommendation": "host_score improves p95 by 4509.60 ms"
+    }
+  ],
+  "health": {
+    "ok": true,
+    "backend": "spike_usb",
+    "spike_connected": true,
+    "repl_ok": true,
+    "sound_supported": true,
+    "serial_port": "/dev/cu.usbmodem3263378A34381"
+  }
+}

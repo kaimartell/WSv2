@@ -7,7 +7,11 @@ from host_agent.server import run_server
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the workshop host agent server")
     parser.add_argument("--list", action="store_true", help="List serial + BLE devices and exit")
-    parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind")
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host interface to bind (default 0.0.0.0 for Docker host.docker.internal access)",
+    )
     parser.add_argument("--port", type=int, default=8000, help="Port to bind")
     parser.add_argument(
         "--backend",

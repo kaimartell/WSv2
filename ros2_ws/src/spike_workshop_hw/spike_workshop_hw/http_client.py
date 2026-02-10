@@ -1,3 +1,4 @@
+import http.client
 import json
 import threading
 import time
@@ -282,6 +283,54 @@ class HostAgentHttpClient:
             timeout_sec=timeout_sec,
         )
 
+    def play_score_with_meta(
+        self,
+        payload: Dict[str, Any],
+        *,
+        timeout_sec: Optional[float] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        safe_payload = dict(payload or {})
+        return self._post_with_meta(
+            "/score/play",
+            safe_payload,
+            default_failure={"accepted": False},
+            timeout_sec=timeout_sec,
+        )
+
+    def stop_score_with_meta(
+        self,
+        *,
+        timeout_sec: Optional[float] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        return self._post_with_meta(
+            "/score/stop",
+            {},
+            default_failure={"stopped": False},
+            timeout_sec=timeout_sec,
+        )
+
+    def get_score_status_with_meta(
+        self,
+        *,
+        timeout_sec: Optional[float] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        response, meta = self._request("GET", "/score/status", None, timeout_sec=timeout_sec)
+        self._record_error(meta.get("error", ""))
+        if response is None:
+            return {"ok": False, "playing": False}, meta
+        return response, meta
+
+    def get_debug_timing_with_meta(
+        self,
+        *,
+        timeout_sec: Optional[float] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        response, meta = self._request("GET", "/debug/timing", None, timeout_sec=timeout_sec)
+        self._record_error(meta.get("error", ""))
+        if response is None:
+            return {"ok": False}, meta
+        return response, meta
+
     def get_state(self) -> Dict[str, Any]:
         response, _meta = self.get_state_with_meta()
         return response
@@ -372,7 +421,14 @@ class HostAgentHttpClient:
             }
             if not raw:
                 return {"error": meta["error"]}, meta
-        except (error.URLError, TimeoutError, ValueError) as exc:
+        except (
+            error.URLError,
+            TimeoutError,
+            ValueError,
+            http.client.RemoteDisconnected,
+            ConnectionResetError,
+            OSError,
+        ) as exc:
             meta = {
                 "ok": False,
                 "latency_ms": (time.perf_counter() - start) * 1000.0,

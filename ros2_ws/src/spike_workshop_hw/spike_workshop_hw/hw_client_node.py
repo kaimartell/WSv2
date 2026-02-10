@@ -29,6 +29,7 @@ class SpikeHwClientNode(Node):
         self.declare_parameter("consecutive_failures_to_mark_down", 2)
         self.declare_parameter("consecutive_successes_to_mark_up", 1)
         self.declare_parameter("queue_policy", "latest")
+        self.declare_parameter("execution_mode", "host_score")
         self.declare_parameter("fifo_queue_size", DEFAULT_FIFO_QUEUE_SIZE)
         self.declare_parameter("action_topic", "/spike/action")
         self.declare_parameter("action_queue_size", DEFAULT_ACTION_QUEUE_SIZE)
@@ -58,6 +59,12 @@ class SpikeHwClientNode(Node):
                 f"Unknown queue_policy='{queue_policy}', falling back to 'latest'."
             )
             queue_policy = "latest"
+        execution_mode = str(self.get_parameter("execution_mode").value).strip().lower()
+        if execution_mode not in {"stream", "host_score"}:
+            self.get_logger().warning(
+                f"Unknown execution_mode='{execution_mode}', falling back to 'host_score'."
+            )
+            execution_mode = "host_score"
         fifo_queue_size = int(self.get_parameter("fifo_queue_size").value)
         fifo_queue_size = max(1, fifo_queue_size)
         action_topic = str(self.get_parameter("action_topic").value).strip() or "/spike/action"
@@ -71,6 +78,7 @@ class SpikeHwClientNode(Node):
         self._consecutive_failures_to_mark_down = consecutive_failures_to_mark_down
         self._consecutive_successes_to_mark_up = consecutive_successes_to_mark_up
         self._queue_policy = queue_policy
+        self._execution_mode = execution_mode
         self._fifo_queue_size = fifo_queue_size
         self._action_topic = action_topic
         self._action_queue_size = action_queue_size
@@ -136,7 +144,8 @@ class SpikeHwClientNode(Node):
                 f"unreachable_log_throttle_sec={unreachable_log_throttle_sec:.1f}, "
                 f"consecutive_failures_to_mark_down={consecutive_failures_to_mark_down}, "
                 f"consecutive_successes_to_mark_up={consecutive_successes_to_mark_up}, "
-                f"queue_policy={queue_policy}, fifo_queue_size={fifo_queue_size}, "
+                f"queue_policy={queue_policy}, execution_mode={execution_mode}, "
+                f"fifo_queue_size={fifo_queue_size}, "
                 f"action_topic={self._action_topic}, action_queue_size={self._action_queue_size}"
             ),
         )
@@ -665,6 +674,23 @@ class SpikeHwClientNode(Node):
             )
             return result, meta, "POST /sound/beep", None, action_type
 
+        if action_type == "score_play":
+            score_payload = action.get("score")
+            if not isinstance(score_payload, dict):
+                score_payload = dict(action)
+                score_payload.pop("type", None)
+            result, meta = self._http_client.play_score_with_meta(
+                dict(score_payload),
+                timeout_sec=max(self._action_http_timeout_sec, 10.0),
+            )
+            return result, meta, "POST /score/play", None, action_type
+
+        if action_type == "score_stop":
+            result, meta = self._http_client.stop_score_with_meta(
+                timeout_sec=max(1.0, self._http_timeout_sec),
+            )
+            return result, meta, "POST /score/stop", 0.0, action_type
+
         return (
             {"accepted": False, "error": f"unsupported action type '{action_type}'"},
             {"ok": True, "latency_ms": 0.0, "error": ""},
@@ -710,14 +736,39 @@ class SpikeHwClientNode(Node):
     def _poll_state(self) -> None:
         if self._shutting_down:
             return
-        state, meta = self._http_client.get_state_with_meta()
-        self._record_connectivity(
-            transport_ok=bool(meta.get("ok", False)),
-            source="GET /state",
-            latency_ms=self._to_float(meta.get("latency_ms")),
-            error=str(meta.get("error", "")),
-        )
-        self._publish_state(state)
+        try:
+            state, meta = self._http_client.get_state_with_meta()
+            self._record_connectivity(
+                transport_ok=bool(meta.get("ok", False)),
+                source="GET /state",
+                latency_ms=self._to_float(meta.get("latency_ms")),
+                error=str(meta.get("error", "")),
+            )
+
+            if self._execution_mode == "host_score":
+                score_status, score_meta = self._http_client.get_score_status_with_meta(
+                    timeout_sec=max(0.5, self._http_timeout_sec),
+                )
+                self._record_connectivity(
+                    transport_ok=bool(score_meta.get("ok", False)),
+                    source="GET /score/status",
+                    latency_ms=self._to_float(score_meta.get("latency_ms")),
+                    error=str(score_meta.get("error", "")),
+                )
+                if isinstance(state, dict):
+                    if bool(score_meta.get("ok", False)) and isinstance(score_status, dict):
+                        state["score"] = score_status
+                        state["score_playing"] = bool(score_status.get("playing", False))
+                    else:
+                        state["score"] = {
+                            "ok": False,
+                            "playing": False,
+                            "error": str(score_meta.get("error", "score status unreachable")),
+                        }
+                        state["score_playing"] = False
+            self._publish_state(state)
+        except Exception as exc:  # noqa: BLE001
+            self._safe_log("warning", f"State poll failure ignored: {exc}")
 
     def _publish_state(self, state: Dict[str, Any]) -> None:
         if not self._context_ok():
@@ -801,9 +852,17 @@ class SpikeHwClientNode(Node):
                 self._safe_log("info", f"Sound stop not supported or failed: {error_msg}")
 
     def request_shutdown_cleanup(self) -> None:
+        if self._shutting_down:
+            return
         self._shutting_down = True
         if self._poll_timer is not None:
             self._poll_timer.cancel()
+
+        if self._execution_mode == "host_score":
+            try:
+                self._http_client.stop_score_with_meta(timeout_sec=min(1.0, self._http_timeout_sec))
+            except Exception:  # noqa: BLE001
+                pass
 
         # Safety-first: issue a direct host-agent stop before ROS teardown and worker joins.
         self._best_effort_http_stop(timeout_sec=min(1.0, self._http_timeout_sec))
@@ -812,9 +871,13 @@ class SpikeHwClientNode(Node):
         self._cmd_event.set()
         self._action_event.set()
         if self._cmd_worker_thread.is_alive():
-            self._cmd_worker_thread.join(timeout=max(1.0, self._http_timeout_sec + 0.5))
+            self._cmd_worker_thread.join(timeout=1.0)
+            if self._cmd_worker_thread.is_alive():
+                self._safe_log("warning", "Command worker did not exit before shutdown timeout.")
         if self._action_worker_thread.is_alive():
-            self._action_worker_thread.join(timeout=max(1.0, self._action_http_timeout_sec + 0.5))
+            self._action_worker_thread.join(timeout=1.0)
+            if self._action_worker_thread.is_alive():
+                self._safe_log("warning", "Action worker did not exit before shutdown timeout.")
 
         # Final stop attempt in case a command was in-flight while workers were winding down.
         self._best_effort_http_stop(timeout_sec=min(1.0, self._http_timeout_sec))

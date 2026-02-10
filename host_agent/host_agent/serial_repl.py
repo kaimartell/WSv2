@@ -3,6 +3,8 @@ import threading
 from dataclasses import dataclass
 from typing import Optional
 
+RAW_WRITE_CHUNK_BYTES = 128
+
 
 @dataclass
 class RawExecResult:
@@ -75,8 +77,27 @@ class SerialMicroPythonClient:
         finally:
             self._serial_conn = None
 
-    def execute_raw(self, code: str, timeout: Optional[float] = None) -> RawExecResult:
+    def execute_raw(
+        self,
+        code: str,
+        timeout: Optional[float] = None,
+        retry_on_syntax_error: bool = False,
+    ) -> RawExecResult:
+        return self.execute_raw_with_options(
+            code=code,
+            timeout=timeout,
+            retry_on_syntax_error=retry_on_syntax_error,
+        )
+
+    def execute_raw_with_options(
+        self,
+        *,
+        code: str,
+        timeout: Optional[float] = None,
+        retry_on_syntax_error: bool = False,
+    ) -> RawExecResult:
         exec_timeout = self._exec_timeout if timeout is None else max(0.5, float(timeout))
+        syntax_retry_budget = 1 if retry_on_syntax_error else 0
 
         with self._io_lock:
             try:
@@ -87,28 +108,40 @@ class SerialMicroPythonClient:
             if self._serial_conn is None:
                 return RawExecResult(ok=False, error="serial not open")
 
-            for attempt in range(1, self._sync_retries + 1):
-                entered, enter_output = self._enter_raw_repl()
-                if not entered:
-                    if attempt < self._sync_retries:
+            syntax_attempt = 0
+            while syntax_attempt <= syntax_retry_budget:
+                for attempt in range(1, self._sync_retries + 1):
+                    entered, enter_output = self._enter_raw_repl()
+                    if not entered:
+                        if attempt < self._sync_retries:
+                            self._recover_connection()
+                            continue
+                        return RawExecResult(
+                            ok=False,
+                            error=(
+                                "raw repl sync failed; reset hub and close apps using serial (for example LEGO SPIKE app)"
+                            ),
+                            stderr=enter_output,
+                        )
+
+                    result = self._execute_code_raw(code=code, timeout=exec_timeout)
+                    self._exit_raw_repl()
+                    if (
+                        retry_on_syntax_error
+                        and syntax_attempt < syntax_retry_budget
+                        and self._looks_like_syntax_error(result)
+                    ):
                         self._recover_connection()
+                        syntax_attempt += 1
                         continue
-                    return RawExecResult(
-                        ok=False,
-                        error=(
-                            "raw repl sync failed; reset hub and close apps using serial (for example LEGO SPIKE app)"
-                        ),
-                        stderr=enter_output,
-                    )
+                    return result
 
-                result = self._execute_code_raw(code=code, timeout=exec_timeout)
-                self._exit_raw_repl()
-                return result
+                return RawExecResult(
+                    ok=False,
+                    error="raw repl sync failed; reset hub and close apps using serial (for example LEGO SPIKE app)",
+                )
 
-            return RawExecResult(
-                ok=False,
-                error="raw repl sync failed; reset hub and close apps using serial (for example LEGO SPIKE app)",
-            )
+            return RawExecResult(ok=False, error="raw repl execution failed")
 
     def _recover_connection(self) -> None:
         self.close()
@@ -131,7 +164,8 @@ class SerialMicroPythonClient:
             total = 0
             length = len(payload)
             while total < length:
-                written = self._serial_conn.write(payload[total:])
+                end = min(length, total + RAW_WRITE_CHUNK_BYTES)
+                written = self._serial_conn.write(payload[total:end])
                 if written is None:
                     written = 0
                 if written <= 0:
@@ -277,3 +311,16 @@ class SerialMicroPythonClient:
         # Best effort return to friendly REPL.
         self._write(b"\x02")
         self._read_until(marker=b">>>", timeout=self._prompt_timeout)
+
+    @staticmethod
+    def _looks_like_syntax_error(result: RawExecResult) -> bool:
+        text = " ".join(
+            part
+            for part in (
+                result.error or "",
+                result.stdout or "",
+                result.stderr or "",
+            )
+            if part
+        ).lower()
+        return "syntaxerror" in text or "invalid syntax" in text

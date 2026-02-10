@@ -1,12 +1,17 @@
 import ast
 import glob
+import json
 import logging
+import os
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from host_agent.score_timeline import normalize_score_payload
 from host_agent.serial_repl import RawExecResult, SerialMicroPythonClient
+from host_agent.timing_telemetry import TimingTelemetry
 
 
 USB_OK_MARKER = "__SPIKE_USB_OK__"
@@ -14,6 +19,10 @@ USB_ERR_MARKER = "__SPIKE_USB_ERR__"
 USB_STATUS_MARKER = "__SPIKE_USB_STATUS__"
 STOP_SPEED_EPSILON = 1e-3
 SOUND_PROBE_CACHE_TTL_SEC = 10.0
+SCORE_BATCH_MAX_EVENTS = 24
+SCORE_BATCH_MAX_SPAN_MS = 900
+SCORE_SCHEDULER_LEAD_SEC = 0.03
+VALID_STOP_ACTIONS = {"coast", "brake", "hold"}
 
 _SERIAL_CANDIDATE_REGEX = re.compile(
     r"^/dev/(cu|tty)\.(usbmodem|usbserial|SLAB_USBtoUART|wchusbserial|ttyUSB|ttyACM)",
@@ -101,9 +110,16 @@ class SpikeUsbBackend:
         self._prompt_timeout = max(0.5, float(prompt_timeout))
         self._command_timeout = max(1.0, float(command_timeout))
         self._sync_retries = max(2, int(sync_retries))
-        self._debug_repl_snippets = bool(debug_repl_snippets)
+        env_debug = str(os.environ.get("HOST_AGENT_DEBUG_SNIPPETS", "")).strip().lower()
+        self._debug_repl_snippets = bool(debug_repl_snippets) or env_debug in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
         self._lock = threading.Lock()
+        self._client: Optional[SerialMicroPythonClient] = None
         self._state = "idle"
         self._last_speed = 0.0
         self._timestamp = time.time()
@@ -112,6 +128,21 @@ class SpikeUsbBackend:
         self._resolved_port = ""
         self._sound_supported_cache: Optional[bool] = None
         self._sound_probe_monotonic = 0.0
+        self._score_lock = threading.Lock()
+        self._score_thread: Optional[threading.Thread] = None
+        self._score_stop_event = threading.Event()
+        self._score_playing = False
+        self._score_current_index = 0
+        self._score_total_events = 0
+        self._score_started_monotonic = 0.0
+        self._score_expected_end_monotonic = 0.0
+        self._score_last_error = ""
+        self._score_batch_mode_used = False
+        self._score_batch_disabled = False
+        self._score_batch_disabled_reason = ""
+        self._score_compile_check: Dict[str, Any] = {"ok": True}
+        self._score_session_id = 0
+        self._timing = TimingTelemetry(max_events=5000)
 
     @staticmethod
     def _trim_text(text: str, limit: int = 800) -> str:
@@ -146,7 +177,104 @@ class SpikeUsbBackend:
 
     @staticmethod
     def _prepare_snippet(lines: List[str]) -> str:
-        return "\n".join(lines).rstrip("\n") + "\n"
+        clean_lines = [str(line).replace("\r", "") for line in lines]
+        return "\n".join(clean_lines).rstrip("\n") + "\n"
+
+    @staticmethod
+    def _normalize_stop_action(stop_action: Any) -> str:
+        candidate = str(stop_action or "coast").strip().lower()
+        if candidate in VALID_STOP_ACTIONS:
+            return candidate
+        return "coast"
+
+    @staticmethod
+    def _snippet_excerpt(snippet: str, line_no: int, radius: int = 2) -> str:
+        rows = (snippet or "").splitlines()
+        if not rows:
+            return ""
+        if line_no <= 0:
+            line_no = 1
+        start = max(1, line_no - max(1, radius))
+        end = min(len(rows), line_no + max(1, radius))
+        excerpt_lines: List[str] = []
+        for idx in range(start, end + 1):
+            marker = ">" if idx == line_no else " "
+            excerpt_lines.append(f"{marker}{idx:04d}: {rows[idx - 1]}")
+        return "\n".join(excerpt_lines)
+
+    def _compile_check_snippet(self, snippet: str, *, label: str) -> Dict[str, Any]:
+        if "\r" in snippet:
+            return {
+                "ok": False,
+                "label": label,
+                "line": 0,
+                "error": "snippet contains carriage-return characters",
+                "offending_line": "",
+                "excerpt": self._snippet_excerpt(snippet, 1),
+            }
+        if not snippet.endswith("\n"):
+            return {
+                "ok": False,
+                "label": label,
+                "line": 0,
+                "error": "snippet must end with newline",
+                "offending_line": "",
+                "excerpt": self._snippet_excerpt(snippet, 1),
+            }
+
+        try:
+            ast.parse(snippet)
+        except SyntaxError as exc:
+            line_no = int(exc.lineno or 0)
+            rows = snippet.splitlines()
+            offending = rows[line_no - 1] if 0 < line_no <= len(rows) else ""
+            error_msg = str(exc.msg or "syntax error")
+            return {
+                "ok": False,
+                "label": label,
+                "line": line_no,
+                "error": error_msg,
+                "offending_line": offending,
+                "excerpt": self._snippet_excerpt(snippet, line_no or 1),
+            }
+
+        return {"ok": True, "label": label}
+
+    def _write_score_batch_artifacts(
+        self,
+        *,
+        snippet: str,
+        encoded_actions: List[Dict[str, Any]],
+        compile_check: Dict[str, Any],
+        reason: str = "",
+    ) -> None:
+        if not self._debug_repl_snippets:
+            return
+
+        artifacts_dir = Path("artifacts")
+        try:
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            snippet_path = artifacts_dir / "last_score_batch_snippet.py"
+            events_path = artifacts_dir / "last_score_batch_events.json"
+            snippet_path.write_text(snippet, encoding="utf-8")
+            events_payload: Dict[str, Any] = {
+                "timestamp": time.time(),
+                "reason": str(reason or ""),
+                "event_count": len(encoded_actions),
+                "compile_check": compile_check,
+                "events": encoded_actions,
+            }
+            events_path.write_text(
+                json.dumps(events_payload, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("[SPIKE_USB] Failed writing score batch artifacts: %s", exc)
+
+    @staticmethod
+    def _is_syntax_error_text(value: str) -> bool:
+        normalized = str(value or "").lower()
+        return "syntaxerror" in normalized or "invalid syntax" in normalized
 
     def _record_error(self, message: str) -> None:
         self._last_error = str(message)
@@ -182,27 +310,62 @@ class SpikeUsbBackend:
             f"Multiple USB serial candidates found ({joined}). Use --serial-port to select one.",
         )
 
-    def _execute(self, snippet: str, timeout: Optional[float] = None) -> RawExecResult:
+    def _reset_client(self) -> None:
+        if self._client is not None:
+            try:
+                self._client.close()
+            except Exception:  # noqa: BLE001
+                pass
+        self._client = None
+
+    def _ensure_client(self) -> Tuple[Optional[SerialMicroPythonClient], str]:
         port, error = self._resolve_serial_port()
         if port is None:
-            return RawExecResult(ok=False, error=error)
+            return None, error
+
+        if self._client is not None:
+            return self._client, ""
 
         try:
-            with SerialMicroPythonClient(
+            self._client = SerialMicroPythonClient(
                 port=port,
                 baud=self._baud,
                 prompt_timeout=self._prompt_timeout,
                 exec_timeout=self._command_timeout,
                 sync_retries=self._sync_retries,
-            ) as client:
-                result = client.execute_raw(snippet, timeout=timeout)
+            )
+            self._client.open()
+        except Exception as exc:  # noqa: BLE001
+            self._client = None
+            return None, str(exc)
+        return self._client, ""
+
+    def _execute(
+        self,
+        snippet: str,
+        timeout: Optional[float] = None,
+        *,
+        retry_on_syntax_error: bool = False,
+    ) -> RawExecResult:
+        client, error = self._ensure_client()
+        if client is None:
+            return RawExecResult(ok=False, error=error)
+
+        try:
+            result = client.execute_raw(
+                snippet,
+                timeout=timeout,
+                retry_on_syntax_error=retry_on_syntax_error,
+            )
         except Exception as exc:  # noqa: BLE001
             result = RawExecResult(ok=False, error=str(exc))
+            self._reset_client()
 
         if not result.ok and "raw repl sync failed" in (result.error or "").lower():
             result.error = (
                 "raw repl sync failed; reset hub and close other apps that may hold the serial port"
             )
+            self._reset_client()
 
         return result
 
@@ -665,6 +828,655 @@ class SpikeUsbBackend:
                 self._sound_probe_monotonic = time.monotonic()
             return payload
 
+    def _score_stop_lines(self) -> List[str]:
+        return [
+            "try:",
+            "    motor.stop(_p)",
+            "except Exception:",
+            "    try:",
+            "        motor.run(_p, 0)",
+            "    except Exception:",
+            "        try:",
+            "            motor.set_duty_cycle(_p, 0)",
+            "        except Exception:",
+            "            pass",
+        ]
+
+    def _encode_score_action(self, action: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        action_type = str(action.get("type", "")).strip().lower()
+        if action_type == "run":
+            speed = self._clip_speed(action.get("speed", 0.0))
+            return {
+                "type": "run",
+                "velocity": self._velocity_units(speed),
+            }
+        if action_type == "stop":
+            return {
+                "type": "stop",
+                "stop_action": self._normalize_stop_action(action.get("stop_action", "coast")),
+            }
+        if action_type == "beep":
+            return {
+                "type": "beep",
+                "freq_hz": self._clamp_freq_hz(int(action.get("freq_hz", action.get("freq", 440)))),
+                "duration_ms": self._clamp_duration_ms(
+                    int(action.get("duration_ms", action.get("duration", 120)))
+                ),
+                "volume": self._clamp_volume(int(action.get("volume", 60))),
+            }
+        return None
+
+    def _build_score_batch_snippet(
+        self,
+        *,
+        port_letter: str,
+        actions: List[Dict[str, Any]],
+        initial_delay_ms: int,
+    ) -> str:
+        safe_initial_delay_ms = max(0, int(initial_delay_ms))
+        has_beep = any(item.get("type") == "beep" for item in actions)
+
+        lines: List[str] = [
+            "import time",
+            "import motor",
+            "from hub import port",
+            f"_letter = {port_letter!r}",
+            "_p = getattr(port, _letter)",
+            f"_has_beep = {bool(has_beep)}",
+            "_snd = None",
+            "if _has_beep:",
+            "    from hub import sound as _snd",
+            "_events = [",
+        ]
+
+        for row in actions:
+            t_rel_ms = int(row["t_rel_ms"])
+            kind = str(row["type"])
+            if kind == "run":
+                velocity = int(row["velocity"])
+                lines.append(f"    ({t_rel_ms}, 'run', {velocity}, 0, 0, ''),")
+            elif kind == "stop":
+                stop_action = self._normalize_stop_action(row.get("stop_action", "coast"))
+                lines.append(
+                    f"    ({t_rel_ms}, 'stop', 0, 0, 0, {stop_action!r}),"
+                )
+            elif kind == "beep":
+                freq_hz = int(row["freq_hz"])
+                duration_ms = int(row["duration_ms"])
+                volume = int(row["volume"])
+                lines.append(
+                    f"    ({t_rel_ms}, 'beep', {freq_hz}, {duration_ms}, {volume}, ''),"
+                )
+
+        lines.extend(
+            [
+                "]",
+                "_t0 = time.ticks_ms()",
+                f"_initial_delay_ms = {safe_initial_delay_ms}",
+                "if _initial_delay_ms > 0:",
+                "    _first_target = time.ticks_add(_t0, _initial_delay_ms)",
+                "    while time.ticks_diff(_first_target, time.ticks_ms()) > 0:",
+                "        pass",
+                "for _ev in _events:",
+                "    _target = time.ticks_add(_t0, _initial_delay_ms + _ev[0])",
+                "    while time.ticks_diff(_target, time.ticks_ms()) > 0:",
+                "        pass",
+                "    _kind = _ev[1]",
+                "    if _kind == 'run':",
+                "        motor.run(_p, int(_ev[2]))",
+                "    elif _kind == 'stop':",
+            ]
+        )
+        lines.extend([f"        {line}" if line else "" for line in self._score_stop_lines()])
+        lines.extend(
+            [
+                "    elif _kind == 'beep':",
+                "        if _snd is None:",
+                "            raise RuntimeError('Missing hub.sound API; firmware/API mismatch.')",
+                "        _snd.beep(int(_ev[2]), int(_ev[3]), int(_ev[4]))",
+                "",
+                f"print({USB_OK_MARKER!r})",
+            ]
+        )
+
+        wrapped: List[str] = ["try:"]
+        for line in lines:
+            if line:
+                wrapped.append(f"    {line}")
+            else:
+                wrapped.append("")
+        wrapped.extend(
+            [
+                "except Exception as _e:",
+                f"    print({USB_ERR_MARKER!r} + ' ' + repr(_e))",
+            ]
+        )
+        return self._prepare_snippet(wrapped)
+
+    def _dispatch_score_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        action_type = str(action.get("type", "")).strip().lower()
+        port = str(action.get("port", self._motor_port)).strip().upper() or self._motor_port
+        stop_action = self._normalize_stop_action(action.get("stop_action", "coast"))
+        speed = self._clip_speed(action.get("speed", 0.0))
+        if action_type == "run":
+            return self.run(speed=speed, duration=0.0, port=port)
+        if action_type == "stop":
+            return self.stop(port=port, stop_action=stop_action)
+        if action_type == "beep":
+            return self.sound_beep(
+                freq_hz=int(action.get("freq_hz", action.get("freq", 440))),
+                duration_ms=int(action.get("duration_ms", action.get("duration", 120))),
+                volume=int(action.get("volume", 60)),
+            )
+        if action_type == "run_for_degrees":
+            return self.run_for_degrees(
+                port=port,
+                speed=speed,
+                degrees=int(action.get("degrees", 0)),
+                stop_action=stop_action,
+            )
+        if action_type == "run_to_absolute_position":
+            return self.run_to_absolute(
+                port=port,
+                speed=speed,
+                position_degrees=int(action.get("position_degrees", 0)),
+                stop_action=stop_action,
+            )
+        if action_type == "run_to_relative_position":
+            return self.run_to_relative(
+                port=port,
+                speed=speed,
+                degrees=int(action.get("degrees", 0)),
+                stop_action=stop_action,
+            )
+        if action_type == "reset_relative_position":
+            return self.reset_relative(port=port)
+        if action_type == "set_duty_cycle":
+            return self.set_duty_cycle(port=port, speed=speed)
+        return {"accepted": False, "error": f"unsupported score action type '{action_type}'"}
+
+    def _score_stop_worker_locked(self, join_timeout: float = 1.0) -> bool:
+        thread = self._score_thread
+        self._score_stop_event.set()
+        worker_stopped = True
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=max(0.1, float(join_timeout)))
+            worker_stopped = not thread.is_alive()
+        self._score_thread = None if worker_stopped else thread
+        self._score_playing = False
+        return worker_stopped
+
+    @staticmethod
+    def _score_action_success(result: Dict[str, Any]) -> bool:
+        if "accepted" in result:
+            return bool(result.get("accepted", False))
+        if "stopped" in result:
+            return bool(result.get("stopped", False))
+        if "ok" in result:
+            return bool(result.get("ok", False))
+        return False
+
+    def _group_score_events(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        groups: List[Dict[str, Any]] = []
+        current_t: Optional[int] = None
+        current_events: List[Dict[str, Any]] = []
+        for row in events:
+            t_rel_ms = int(row.get("t_rel_ms", 0))
+            if current_t is None:
+                current_t = t_rel_ms
+            if t_rel_ms != current_t:
+                groups.append({"t_rel_ms": current_t, "events": current_events})
+                current_t = t_rel_ms
+                current_events = []
+            current_events.append(row)
+        if current_t is not None:
+            groups.append({"t_rel_ms": current_t, "events": current_events})
+        return groups
+
+    def _windowize_score_groups(self, groups: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+        windows: List[List[Dict[str, Any]]] = []
+        group_index = 0
+        while group_index < len(groups):
+            window = [groups[group_index]]
+            base_t = int(groups[group_index]["t_rel_ms"])
+            scan_index = group_index + 1
+            while scan_index < len(groups):
+                next_t = int(groups[scan_index]["t_rel_ms"])
+                span_ms = next_t - base_t
+                if span_ms > SCORE_BATCH_MAX_SPAN_MS:
+                    break
+                event_count = sum(len(g["events"]) for g in window) + len(groups[scan_index]["events"])
+                if event_count > SCORE_BATCH_MAX_EVENTS:
+                    break
+                window.append(groups[scan_index])
+                scan_index += 1
+            windows.append(window)
+            group_index = scan_index
+        return windows
+
+    def _preflight_score_batch_compile(
+        self,
+        *,
+        port_letter: str,
+        events: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        groups = self._group_score_events(events)
+        windows = self._windowize_score_groups(groups)
+
+        batch_windows = 0
+        batch_events = 0
+        for window_index, window in enumerate(windows):
+            base_t = int(window[0]["t_rel_ms"])
+            encoded_actions: List[Dict[str, Any]] = []
+            fallback_needed = False
+            for group in window:
+                rel_t = max(0, int(group["t_rel_ms"]) - base_t)
+                for event in group["events"]:
+                    action = dict(event.get("action", {}))
+                    encoded = self._encode_score_action(action)
+                    if encoded is None:
+                        fallback_needed = True
+                        break
+                    encoded["t_rel_ms"] = rel_t
+                    encoded_actions.append(encoded)
+                if fallback_needed:
+                    break
+
+            if fallback_needed or not encoded_actions:
+                continue
+
+            snippet = self._build_score_batch_snippet(
+                port_letter=port_letter,
+                actions=encoded_actions,
+                initial_delay_ms=0,
+            )
+            compile_check = self._compile_check_snippet(
+                snippet,
+                label=f"score_batch_window_{window_index}",
+            )
+            self._write_score_batch_artifacts(
+                snippet=snippet,
+                encoded_actions=encoded_actions,
+                compile_check=compile_check,
+                reason="preflight",
+            )
+            if not bool(compile_check.get("ok", False)):
+                return {
+                    "ok": False,
+                    "batch_mode_used": False,
+                    "event_count": len(events),
+                    "batch_event_count": batch_events + len(encoded_actions),
+                    "batch_window_count": batch_windows + 1,
+                    "compile_check": compile_check,
+                    "error": "batch snippet compile failed before execution",
+                }
+
+            batch_windows += 1
+            batch_events += len(encoded_actions)
+
+        return {
+            "ok": True,
+            "batch_mode_used": batch_windows > 0,
+            "event_count": len(events),
+            "batch_event_count": batch_events,
+            "batch_window_count": batch_windows,
+            "compile_check": {"ok": True, "label": "score_batch_preflight"},
+        }
+
+    def _run_score_window_fallback(
+        self,
+        *,
+        window: List[Dict[str, Any]],
+        start_monotonic: float,
+    ) -> Tuple[bool, float]:
+        fallback_start_monotonic = time.monotonic()
+        for group in window:
+            group_t = int(group["t_rel_ms"])
+            group_scheduled = start_monotonic + (group_t / 1000.0)
+            while not self._score_stop_event.is_set():
+                remaining = group_scheduled - time.monotonic()
+                if remaining <= 0.0:
+                    break
+                time.sleep(min(0.01, remaining))
+            if self._score_stop_event.is_set():
+                return False, fallback_start_monotonic
+
+            for event in group["events"]:
+                action = dict(event.get("action", {}))
+                action_type = str(action.get("type", "")).strip().lower()
+                result = self._dispatch_score_action(action)
+                if not self._score_action_success(result):
+                    error_text = str(result.get("error", "score fallback action failed"))
+                    if action_type == "beep":
+                        # Keep motor timing running even when speaker APIs are unavailable.
+                        logging.warning(
+                            "[SPIKE_USB] Ignoring beep failure in score fallback: %s",
+                            error_text,
+                        )
+                        continue
+                    self._score_last_error = error_text
+                    logging.warning(
+                        "[SPIKE_USB] score fallback action failed (type=%s): %s",
+                        action_type or "<unknown>",
+                        error_text,
+                    )
+                    return False, fallback_start_monotonic
+        return True, fallback_start_monotonic
+
+    def _score_worker(
+        self,
+        *,
+        session_id: int,
+        events: List[Dict[str, Any]],
+        start_monotonic: float,
+        port_letter: str,
+    ) -> None:
+        self._timing.start_session(label=f"spike_usb_score_{session_id}")
+        groups = self._group_score_events(events)
+        windows = self._windowize_score_groups(groups)
+        batch_disabled = False
+        for window_index, window in enumerate(windows):
+            if self._score_stop_event.is_set():
+                break
+
+            base_t = int(window[0]["t_rel_ms"])
+            first_group_time = start_monotonic + (base_t / 1000.0)
+            while not self._score_stop_event.is_set():
+                remaining = first_group_time - time.monotonic() - SCORE_SCHEDULER_LEAD_SEC
+                if remaining <= 0.0:
+                    break
+                time.sleep(min(0.01, remaining))
+            if self._score_stop_event.is_set():
+                break
+
+            now = time.monotonic()
+            initial_delay_ms = int(max(0.0, (first_group_time - now) * 1000.0))
+            encoded_actions: List[Dict[str, Any]] = []
+            fallback_needed = False
+            for group in window:
+                group_t = int(group["t_rel_ms"])
+                rel_t = max(0, group_t - base_t)
+                for event in group["events"]:
+                    action = dict(event.get("action", {}))
+                    encoded = self._encode_score_action(action)
+                    if encoded is None:
+                        fallback_needed = True
+                        break
+                    encoded["t_rel_ms"] = rel_t
+                    encoded_actions.append(encoded)
+                if fallback_needed:
+                    break
+
+            success = True
+            batch_start_monotonic = time.monotonic()
+            if (not batch_disabled) and (not fallback_needed) and encoded_actions:
+                span_ms = int(window[-1]["t_rel_ms"]) - base_t
+                timeout = max(2.0, (initial_delay_ms + span_ms) / 1000.0 + 2.0)
+                snippet = self._build_score_batch_snippet(
+                    port_letter=port_letter,
+                    actions=encoded_actions,
+                    initial_delay_ms=initial_delay_ms,
+                )
+                compile_check = self._compile_check_snippet(
+                    snippet,
+                    label=f"score_batch_worker_session_{session_id}",
+                )
+                self._write_score_batch_artifacts(
+                    snippet=snippet,
+                    encoded_actions=encoded_actions,
+                    compile_check=compile_check,
+                    reason="worker_window",
+                )
+                if not bool(compile_check.get("ok", False)):
+                    error = (
+                        f"{compile_check.get('error', 'compile check failed')} "
+                        f"(line={compile_check.get('line', 0)})"
+                    ).strip()
+                    batch_disabled = True
+                    with self._score_lock:
+                        self._score_batch_disabled = True
+                        self._score_batch_disabled_reason = error
+                        self._score_compile_check = dict(compile_check)
+                    logging.warning("[SPIKE_USB] score batch compile check failed: %s", error)
+                    success, batch_start_monotonic = self._run_score_window_fallback(
+                        window=window,
+                        start_monotonic=start_monotonic,
+                    )
+                    if not success and not self._score_last_error:
+                        self._score_last_error = error
+
+                with self._lock:
+                    result = self._execute(
+                        snippet=snippet,
+                        timeout=timeout,
+                        retry_on_syntax_error=True,
+                    )
+                if not self._successful(result):
+                    error = self._extract_error_from_result(result, default="score batch failed")
+                    logging.warning("[SPIKE_USB] score batch failed: %s", error)
+                    self._write_score_batch_artifacts(
+                        snippet=snippet,
+                        encoded_actions=encoded_actions,
+                        compile_check=compile_check,
+                        reason=f"runtime_failure:{error}",
+                    )
+                    if self._debug_repl_snippets:
+                        logging.warning("[SPIKE_USB] score batch snippet:\n%s", snippet)
+                    if (
+                        self._is_syntax_error_text(error)
+                        or "raw repl sync failed" in error.lower()
+                    ):
+                        batch_disabled = True
+                        reason = error
+                        with self._score_lock:
+                            self._score_batch_disabled = True
+                            self._score_batch_disabled_reason = reason
+                        logging.warning(
+                            "[SPIKE_USB] Disabling batch mode for remaining score events in this session."
+                        )
+                    success, batch_start_monotonic = self._run_score_window_fallback(
+                        window=window,
+                        start_monotonic=start_monotonic,
+                    )
+                    if not success:
+                        if not self._score_last_error:
+                            self._score_last_error = error
+                    else:
+                        # Batch path failed but fallback recovered this window.
+                        self._score_last_error = ""
+            else:
+                success, batch_start_monotonic = self._run_score_window_fallback(
+                    window=window,
+                    start_monotonic=start_monotonic,
+                )
+
+            for group in window:
+                group_t = int(group["t_rel_ms"])
+                scheduled_group = start_monotonic + (group_t / 1000.0)
+                estimated_actual_group = batch_start_monotonic + ((group_t - base_t + initial_delay_ms) / 1000.0)
+                pair_key = f"t{group_t}"
+                for event in group["events"]:
+                    action = dict(event.get("action", {}))
+                    event_id = str(event.get("event_id", ""))
+                    self._timing.record_event(
+                        event_id=event_id or f"evt_{window_index:04d}",
+                        event_type=str(action.get("type", "")),
+                        scheduled_time_monotonic=scheduled_group,
+                        actual_time_monotonic=estimated_actual_group,
+                        pair_key=pair_key,
+                    )
+                    with self._score_lock:
+                        self._score_current_index += 1
+
+            if not success:
+                break
+
+        with self._score_lock:
+            self._score_playing = False
+        try:
+            self.stop(port=port_letter, stop_action="coast")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.sound_stop()
+        except Exception:  # noqa: BLE001
+            pass
+        self._timing.finish_session()
+
+    def score_play(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        raw_payload = dict(payload or {})
+        try:
+            events, metadata = normalize_score_payload(raw_payload)
+        except Exception as exc:  # noqa: BLE001
+            self._score_last_error = str(exc)
+            return {"accepted": False, "error": f"invalid score payload: {exc}"}
+
+        if not events:
+            return {"accepted": False, "error": "score has no events"}
+
+        port_letter = self._normalize_port(str(raw_payload.get("port", metadata.get("port", self._motor_port))))
+        preflight = self._preflight_score_batch_compile(
+            port_letter=port_letter,
+            events=events,
+        )
+        compile_check = dict(preflight.get("compile_check", {"ok": True}))
+        if not bool(preflight.get("ok", False)):
+            error_msg = str(preflight.get("error", "batch preflight failed"))
+            with self._score_lock:
+                self._score_playing = False
+                self._score_total_events = len(events)
+                self._score_current_index = 0
+                self._score_last_error = error_msg
+                self._score_batch_mode_used = False
+                self._score_batch_disabled = True
+                self._score_batch_disabled_reason = error_msg
+                self._score_compile_check = dict(compile_check)
+            return {
+                "accepted": False,
+                "error": error_msg,
+                "event_count": len(events),
+                "batch_mode_used": False,
+                "compile_check": compile_check,
+            }
+
+        batch_mode_used = bool(preflight.get("batch_mode_used", False))
+        start_mode = str(metadata.get("start_mode", "immediate")).strip().lower()
+        start_time_ms = int(metadata.get("start_time_ms", 0))
+        now = time.monotonic()
+        if start_mode == "at_time" and start_time_ms > 0:
+            start_monotonic = now + (start_time_ms / 1000.0)
+        else:
+            start_monotonic = now
+
+        with self._score_lock:
+            previous_stopped = self._score_stop_worker_locked(join_timeout=1.0)
+            if not previous_stopped:
+                self._score_last_error = "previous score worker did not stop within timeout"
+                self._score_batch_mode_used = False
+                self._score_batch_disabled = True
+                self._score_batch_disabled_reason = self._score_last_error
+                self._score_compile_check = dict(compile_check)
+                return {
+                    "accepted": False,
+                    "error": self._score_last_error,
+                    "event_count": len(events),
+                    "batch_mode_used": False,
+                    "compile_check": compile_check,
+                }
+            self._score_stop_event = threading.Event()
+            self._score_session_id += 1
+            session_id = self._score_session_id
+            self._score_playing = True
+            self._score_total_events = len(events)
+            self._score_current_index = 0
+            self._score_started_monotonic = start_monotonic
+            self._score_expected_end_monotonic = (
+                start_monotonic + (float(events[-1].get("t_rel_ms", 0)) / 1000.0)
+            )
+            self._score_last_error = ""
+            self._score_batch_mode_used = bool(batch_mode_used)
+            self._score_batch_disabled = False
+            self._score_batch_disabled_reason = ""
+            self._score_compile_check = dict(compile_check)
+            worker = threading.Thread(
+                target=self._score_worker,
+                kwargs={
+                    "session_id": session_id,
+                    "events": events,
+                    "start_monotonic": start_monotonic,
+                    "port_letter": port_letter,
+                },
+                name=f"spike_usb_score_{session_id}",
+                daemon=True,
+            )
+            self._score_thread = worker
+            worker.start()
+
+        return {
+            "accepted": True,
+            "event_count": len(events),
+            "source": metadata.get("source", "events"),
+            "start_mode": start_mode,
+            "port": port_letter,
+            "batch_mode_used": bool(batch_mode_used),
+            "compile_check": compile_check,
+        }
+
+    def score_stop(self) -> Dict[str, Any]:
+        with self._score_lock:
+            worker_stopped = self._score_stop_worker_locked(join_timeout=1.2)
+            if not worker_stopped:
+                self._score_last_error = "score worker did not stop within timeout"
+                self._score_batch_disabled = True
+                self._score_batch_disabled_reason = self._score_last_error
+                return {"stopped": False, "error": self._score_last_error}
+        stop_result = self.stop(port=self._motor_port, stop_action="coast")
+        try:
+            self.sound_stop()
+        except Exception:  # noqa: BLE001
+            pass
+        self._timing.finish_session()
+        return {"stopped": bool(stop_result.get("stopped", False))}
+
+    def score_status(self) -> Dict[str, Any]:
+        with self._score_lock:
+            playing = bool(self._score_playing)
+            current_index = int(self._score_current_index)
+            total = int(self._score_total_events)
+            started = float(self._score_started_monotonic)
+            expected_end = float(self._score_expected_end_monotonic)
+            last_error = str(self._score_last_error or "")
+            batch_mode_used = bool(self._score_batch_mode_used)
+            batch_disabled = bool(self._score_batch_disabled)
+            batch_disabled_reason = str(self._score_batch_disabled_reason or "")
+            compile_check = dict(self._score_compile_check or {"ok": True})
+
+        timing = self._timing.snapshot()
+        return {
+            "ok": True,
+            "playing": playing,
+            "current_index": current_index,
+            "total_events": total,
+            "start_time_monotonic": started,
+            "expected_end_monotonic": expected_end,
+            "last_error": last_error,
+            "batch_mode_used": batch_mode_used,
+            "batch_disabled": batch_disabled,
+            "batch_disabled_reason": batch_disabled_reason,
+            "compile_check": compile_check,
+            "delta_ms": timing.get("delta_ms", {}),
+            "pair_delta_ms": timing.get("pair_delta_ms", {}),
+            "dropped_events": timing.get("dropped_events", 0),
+        }
+
+    def debug_timing(self) -> Dict[str, Any]:
+        snapshot = self._timing.snapshot()
+        return {
+            "ok": True,
+            **snapshot,
+            "score_status": self.score_status(),
+        }
+
     def motor_status(self, port: str = "A") -> Dict[str, Any]:
         with self._lock:
             port_letter = self._normalize_port(port)
@@ -765,6 +1577,7 @@ class SpikeUsbBackend:
                 payload["serial_port"] = self._resolved_port
             if self._last_error:
                 payload["detail"] = self._last_error
+            payload["score_playing"] = bool(self.score_status().get("playing", False))
             if self._debug_repl_snippets and (not repl_ok):
                 payload["stdout"] = self._trim_text(result.stdout)
                 payload["stderr"] = self._trim_text(result.stderr)
@@ -772,10 +1585,21 @@ class SpikeUsbBackend:
 
     def close(self) -> None:
         try:
+            self.score_stop()
+        except KeyboardInterrupt:
+            return
+        except Exception:  # noqa: BLE001
+            pass
+        try:
             self.stop()
+        except KeyboardInterrupt:
+            return
         except Exception:  # noqa: BLE001
             pass
         try:
             self.sound_stop()
+        except KeyboardInterrupt:
+            return
         except Exception:  # noqa: BLE001
             pass
+        self._reset_client()

@@ -28,12 +28,18 @@ class HostAgentHTTPServer(ThreadingHTTPServer):
             if isinstance(health, dict):
                 if "sound_supported" not in health:
                     health["sound_supported"] = bool(hasattr(self.backend, "sound_beep"))
+                if "timing_supported" not in health:
+                    health["timing_supported"] = bool(
+                        hasattr(self.backend, "score_play")
+                        and hasattr(self.backend, "score_status")
+                    )
                 return health
         return {
             "ok": True,
             "backend": getattr(self.backend, "name", "unknown"),
             "spike_connected": True,
             "sound_supported": bool(hasattr(self.backend, "sound_beep")),
+            "timing_supported": bool(hasattr(self.backend, "score_play")),
         }
 
     def close_backend(self) -> None:
@@ -84,6 +90,36 @@ class HostAgentRequestHandler(BaseHTTPRequestHandler):
 
             if path == "/state":
                 self._write_json(HTTPStatus.OK, self.server.backend.get_state())
+                return
+
+            if path == "/score/status":
+                try:
+                    result = self._invoke_backend("score_status")
+                except Exception:  # noqa: BLE001
+                    logging.exception("Backend score_status() failed")
+                    self._write_json(
+                        HTTPStatus.OK, {"ok": False, "error": "backend_score_status_exception"}
+                    )
+                    return
+                if isinstance(result, dict):
+                    self._write_json(HTTPStatus.OK, result)
+                else:
+                    self._write_json(HTTPStatus.OK, {"ok": bool(result)})
+                return
+
+            if path == "/debug/timing":
+                try:
+                    result = self._invoke_backend("debug_timing")
+                except Exception:  # noqa: BLE001
+                    logging.exception("Backend debug_timing() failed")
+                    self._write_json(
+                        HTTPStatus.OK, {"ok": False, "error": "backend_debug_timing_exception"}
+                    )
+                    return
+                if isinstance(result, dict):
+                    self._write_json(HTTPStatus.OK, result)
+                else:
+                    self._write_json(HTTPStatus.OK, {"ok": bool(result)})
                 return
 
             self._write_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
@@ -349,6 +385,42 @@ class HostAgentRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, response)
                 return
 
+            if path == "/score/play":
+                try:
+                    result = self._invoke_backend("score_play", payload=payload)
+                except Exception:  # noqa: BLE001
+                    logging.exception("Backend score_play() failed")
+                    self._write_json(
+                        HTTPStatus.OK, {"accepted": False, "error": "backend_score_play_exception"}
+                    )
+                    return
+
+                response = self._response_from_result(
+                    result,
+                    true_key="accepted",
+                    false_default={"accepted": False},
+                )
+                self._write_json(HTTPStatus.OK, response)
+                return
+
+            if path == "/score/stop":
+                try:
+                    result = self._invoke_backend("score_stop")
+                except Exception:  # noqa: BLE001
+                    logging.exception("Backend score_stop() failed")
+                    self._write_json(
+                        HTTPStatus.OK, {"stopped": False, "error": "backend_score_stop_exception"}
+                    )
+                    return
+
+                response = self._response_from_result(
+                    result,
+                    true_key="stopped",
+                    false_default={"stopped": False},
+                )
+                self._write_json(HTTPStatus.OK, response)
+                return
+
             self._write_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
         except Exception as exc:  # noqa: BLE001
             logging.exception("POST %s failed", path)
@@ -398,6 +470,15 @@ def run_server(
     except KeyboardInterrupt:
         logging.info("Shutting down host agent")
     finally:
-        server.close_backend()
-        server.shutdown()
-        server.server_close()
+        try:
+            server.close_backend()
+        except KeyboardInterrupt:
+            logging.info("Interrupted while closing backend")
+        except Exception:  # noqa: BLE001
+            logging.exception("Backend close failed")
+        try:
+            server.shutdown()
+        except KeyboardInterrupt:
+            logging.info("Interrupted while shutting down server")
+        finally:
+            server.server_close()

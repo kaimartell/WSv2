@@ -14,6 +14,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("consecutive_failures_to_mark_down", default_value="2"),
         DeclareLaunchArgument("consecutive_successes_to_mark_up", default_value="1"),
         DeclareLaunchArgument("queue_policy", default_value="latest"),
+        DeclareLaunchArgument("execution_mode", default_value="host_score"),
         DeclareLaunchArgument("fifo_queue_size", default_value="32"),
         DeclareLaunchArgument("action_queue_size", default_value="64"),
         DeclareLaunchArgument("participant_id", default_value="1"),
@@ -54,6 +55,7 @@ def generate_launch_description() -> LaunchDescription:
                     "consecutive_successes_to_mark_up"
                 ),
                 "queue_policy": LaunchConfiguration("queue_policy"),
+                "execution_mode": LaunchConfiguration("execution_mode"),
                 "fifo_queue_size": LaunchConfiguration("fifo_queue_size"),
                 "action_topic": LaunchConfiguration("action_topic"),
                 "action_queue_size": LaunchConfiguration("action_queue_size"),
@@ -80,6 +82,7 @@ def generate_launch_description() -> LaunchDescription:
                 "seed": LaunchConfiguration("seed"),
                 "sequence_file": LaunchConfiguration("sequence_file"),
                 "pattern_file": LaunchConfiguration("pattern_file"),
+                "execution_mode": LaunchConfiguration("execution_mode"),
                 "allow_override": LaunchConfiguration("allow_override"),
                 "cmd_topic": LaunchConfiguration("cmd_topic"),
                 "action_topic": LaunchConfiguration("action_topic"),

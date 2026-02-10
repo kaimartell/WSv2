@@ -13,7 +13,8 @@ This repository gives participants ROS flow:
 ROS graph:
 - nodes: `instrument_node`, `spike_hw_client_node`
 - topics: `/actuate`, `/status`, `/done`, `/spike/state`
-- services: `/spike/ping`, `/instrument/list_patterns`, `/instrument/generate_score`, `/instrument/play_pattern`, `/instrument/stop`
+- services: `/spike/ping`, `/instrument/list_patterns`, `/instrument/generate_score`, `/instrument/play_pattern`, `/instrument/play_score`, `/instrument/stop`
+
 
 ## Pre-Workshop Setup
 
@@ -192,11 +193,24 @@ ros2 topic echo /spike/state
 ros2 service call /spike/ping std_srvs/srv/Trigger "{}"
 ```
 
+Timing mode checks:
+
+```bash
+# Launch in host-scheduled mode (recommended)
+ros2 launch spike_workshop_instrument instrument.launch.py execution_mode:=host_score
+
+# Launch in streaming mode (for comparison)
+ros2 launch spike_workshop_instrument instrument.launch.py execution_mode:=stream
+```
+
 ### 6) Troubleshooting
 
 Host agent unreachable:
 - `curl http://localhost:8000/health`
+- from inside the container, also check: `curl http://host.docker.internal:8000/health`
 - restart with `./scripts/start_host_agent_usb.sh`
+- if starting manually, bind host agent on all interfaces for Docker access:
+  - `python3 -m host_agent --host 0.0.0.0 --port 8000 --backend spike_usb --serial-port ...`
 
 `spike_connected: false`:
 - close LEGO SPIKE app
@@ -213,6 +227,18 @@ No motion:
 ```bash
 ros2 service call /spike/ping std_srvs/srv/Trigger "{}"
 ```
+
+Host-score batch syntax error (for example `SyntaxError: invalid syntax`):
+- restart host agent with debug snippet logging enabled:
+
+```bash
+python3 -m host_agent --host 0.0.0.0 --port 8000 --backend spike_usb --serial-port /dev/cu.usbmodemXXXX --motor-port A --debug-repl-snippets
+```
+
+- reproduce once, then inspect:
+  - `artifacts/last_score_batch_snippet.py`
+  - `artifacts/last_score_batch_events.json`
+- those files include compile-check details and the exact snippet sent for the last batch window.
 
 Manual stop:
 
@@ -376,5 +402,51 @@ Services:
 - `/instrument/list_patterns` -> `std_srvs/srv/Trigger`
 - `/instrument/stop` -> `std_srvs/srv/Trigger`
 - `/instrument/play_pattern` -> `spike_workshop_interfaces/srv/PlayPattern`
+- `/instrument/play_score` -> `spike_workshop_interfaces/srv/PlayPattern`
 - `/instrument/generate_score` -> `spike_workshop_interfaces/srv/GenerateScore`
 
+## Timing and Jitter Bench (Advanced)
+
+Run this on host (outside Docker) with host_agent running:
+
+```bash
+cd host_agent
+python3 -m host_agent.tools.timing_bench --host 127.0.0.1 --port 8000 --trials 3 --mode both --output-dir ../artifacts
+```
+
+Expected report fields:
+- `cases[].stream.summary.delta_ms`
+- `cases[].host_score.summary.delta_ms`
+- `cases[].stream.summary.pair_delta_ms`
+- `cases[].host_score.summary.pair_delta_ms`
+- `cases[].recommendation`
+
+The benchmark prints a recommendation line such as:
+- `host_score improves p95 by X ms`
+
+### Container-Side ROS Integration Timing Check
+
+After launching ROS in the container, run:
+
+```bash
+ros2 run spike_workshop_tools timing_integration --host-agent-url http://host.docker.internal:8000 --stop-on-timeout
+```
+
+This will:
+- call `/spike/ping`
+- call `/instrument/generate_score`
+- call `/instrument/play_score`
+- wait for `/done` (or timeout)
+- fetch `GET /debug/timing`
+- write a JSON report to `/tmp/ros_timing_report_<timestamp>.json`
+
+
+
+
+
+
+
+Execution modes:
+- `host_score` (default, recommended): `instrument_node` sends one score payload to host_agent (`/score/play`) and host_agent schedules motor+beep events locally.
+- `stream` (compatibility mode): actions are forwarded one-by-one over HTTP as they are published.
+- Why default to `host_score`: fewer round-trips and better motor/beep alignment under USB RAW REPL overhead.

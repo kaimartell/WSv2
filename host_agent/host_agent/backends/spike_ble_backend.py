@@ -404,10 +404,33 @@ class SpikeBleBackend:
             "backend": self.name,
             "spike_connected": connected,
             "sound_supported": False,
+            "timing_supported": False,
+            "score_playing": False,
         }
         if self._dependency_error is not None:
             response["detail"] = f"BLE dependency missing: {self._dependency_error}"
         return response
+
+    def score_play(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        _ = payload
+        return {"accepted": False, "error": "score_play not implemented for spike_ble backend"}
+
+    def score_stop(self) -> Dict[str, Any]:
+        return {"stopped": True}
+
+    def score_status(self) -> Dict[str, Any]:
+        return {"ok": True, "playing": False, "current_index": 0, "total_events": 0}
+
+    def debug_timing(self) -> Dict[str, Any]:
+        return {
+            "ok": True,
+            "event_count": 0,
+            "dropped_events": 0,
+            "delta_ms": {"count": 0, "mean": 0.0, "p95": 0.0, "max": 0.0},
+            "pair_delta_ms": {"count": 0, "mean": 0.0, "p95": 0.0, "max": 0.0},
+            "execution_duration_ms": 0.0,
+            "recent_events": [],
+        }
 
     def close(self) -> None:
         try:

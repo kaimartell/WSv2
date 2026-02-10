@@ -20,6 +20,7 @@ setup(
     entry_points={
         "console_scripts": [
             "pattern_menu = spike_workshop_tools.pattern_menu:main",
+            "timing_integration = spike_workshop_tools.timing_integration:main",
         ],
     },
 )

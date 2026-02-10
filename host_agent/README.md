@@ -8,19 +8,19 @@ The ROS container talks to it through `http://host.docker.internal:8000`.
 Mock backend (always works):
 
 ```bash
-python3 -m host_agent --port 8000 --backend mock
+python3 -m host_agent --host 0.0.0.0 --port 8000 --backend mock
 ```
 
 USB backend (SPIKE Prime over serial RAW REPL):
 
 ```bash
-python3 -m host_agent --port 8000 --backend spike_usb --serial-port auto --motor-port A
+python3 -m host_agent --host 0.0.0.0 --port 8000 --backend spike_usb --serial-port auto --motor-port A
 ```
 
 BLE backend (optional):
 
 ```bash
-python3 -m host_agent --port 8000 --backend spike_ble
+python3 -m host_agent --host 0.0.0.0 --port 8000 --backend spike_ble
 ```
 
 List serial + BLE candidates:
@@ -93,6 +93,39 @@ Motor endpoints:
 Sound endpoints:
 - `POST /sound/beep` body `{ "freq_hz": 440, "duration_ms": 120, "volume": 60 }`
 - `POST /sound/stop` body `{}`
+
+Score/timing endpoints:
+- `POST /score/play` body includes either:
+  - compact score lanes (`motor`, `melody`, `bpm`, `repeats`, `speed`, `volume`, `port`)
+  - or explicit timed events (`events: [{event_id,t_rel_ms,action}]`)
+- `POST /score/stop` body `{}`
+- `GET /score/status` -> playback state + progress + timing summary
+- `GET /debug/timing` -> recent timing telemetry (`delta_ms`, `pair_delta_ms`, `execution_duration_ms`, `dropped_events`)
+
+## Timing modes and tradeoff
+
+- `stream` mode (legacy): each event is sent separately (`/motor/run`, `/motor/stop`, `/sound/beep`).
+- `host_score` mode (workshop default): one score is posted to `/score/play`, and host_agent schedules events locally using monotonic time.
+
+Why `host_score` is usually better:
+- fewer HTTP + RAW REPL round-trips
+- tighter motor/beep alignment for same-beat events
+- lower jitter under USB transport load
+
+## Timing benchmark
+
+Run from `host_agent/` directory:
+
+```bash
+python3 -m host_agent.tools.timing_bench --host 127.0.0.1 --port 8000 --trials 3 --mode both --output-dir ../artifacts
+```
+
+The report JSON contains:
+- `cases[].stream.summary.delta_ms`
+- `cases[].host_score.summary.delta_ms`
+- `cases[].stream.summary.pair_delta_ms`
+- `cases[].host_score.summary.pair_delta_ms`
+- `cases[].recommendation`
 
 ## Troubleshooting
 
