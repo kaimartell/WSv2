@@ -26,6 +26,12 @@ ROS graph:
   ```bash
   docker version
   ```
+  - Success looks like:
+  ```bash
+    Client:
+      Version:           29.1.3
+      ...
+  ```
 - Install Python 3.10+: https://www.python.org/downloads/
 - Connect LEGO SPIKE Prime hub + motor + USB data cable
 - Clone this repo
