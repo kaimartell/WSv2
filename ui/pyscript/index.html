@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SPIKE Workshop ROS Learning UI</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/roslib/build/roslib.min.js" defer></script>
+  <script src="js/ros_client.js" defer></script>
+  <script src="js/ui_handlers.js" defer></script>
+</head>
+<body>
+  <div class="app-shell details-collapsed" id="app-shell">
+    <header class="topbar panel">
+      <div class="topbar-left">
+        <div class="app-title">ROS Learning UI</div>
+        <div class="app-subtitle">Explore nodes, topics, and services through rosbridge + rosapi</div>
+      </div>
+      <div class="topbar-right">
+        <div class="row compact">
+          <div class="status-pill">
+            <span id="conn-dot" class="dot"></span>
+            <span id="conn-text">Disconnected</span>
+          </div>
+          <label for="ws-url" class="sr-only">Rosbridge URL</label>
+          <input id="ws-url" type="text" value="ws://localhost:9090" autocomplete="off">
+          <button id="connect-btn" class="primary" type="button">Connect</button>
+          <button id="disconnect-btn" type="button">Disconnect</button>
+          <button id="details-toggle-btn" type="button" aria-expanded="false">Show Details</button>
+        </div>
+        <div class="row compact muted-line">
+          <span class="kv">JS: <strong id="js-status">Waiting for JS handlers...</strong></span>
+          <span class="kv">Selected: <strong id="selected-summary">None</strong></span>
+        </div>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="sidebar panel" aria-label="Navigation">
+        <nav class="tab-nav" id="tab-nav">
+          <button id="tab-btn-explore" class="tab-btn active" data-tab="explore" type="button">Explore</button>
+          <button id="tab-btn-interact" class="tab-btn" data-tab="interact" type="button">Interact</button>
+          <button id="tab-btn-run" class="tab-btn" data-tab="run" type="button">Run</button>
+          <button id="tab-btn-logs" class="tab-btn" data-tab="logs" type="button">Logs</button>
+        </nav>
+        <div class="sidebar-note">
+          Start in <strong>Explore</strong>, inspect the graph, then move to <strong>Interact</strong> to publish/call.
+        </div>
+      </aside>
+
+      <section class="main-panel panel">
+        <div id="error-banner" class="error-banner hidden">(none)</div>
+
+        <section id="tab-explore" class="tab-panel active" data-tab-panel="explore">
+          <div class="panel-header-row">
+            <div>
+              <h2>Explore ROS Graph</h2>
+              <p class="muted">Uses rosapi service calls via rosbridge to list and inspect nodes, topics, and services.</p>
+            </div>
+            <div class="row compact">
+              <button id="explore-refresh-btn" class="primary" type="button">Refresh</button>
+            </div>
+          </div>
+
+          <div class="three-col-lists">
+            <section class="list-card">
+              <div class="list-card-header">Nodes <span id="nodes-count" class="badge">0</span></div>
+              <div id="nodes-list" class="select-list" role="listbox" aria-label="Nodes"></div>
+            </section>
+
+            <section class="list-card">
+              <div class="list-card-header">Topics <span id="topics-count" class="badge">0</span></div>
+              <div id="topics-list" class="select-list" role="listbox" aria-label="Topics"></div>
+            </section>
+
+            <section class="list-card">
+              <div class="list-card-header">Services <span id="services-count" class="badge">0</span></div>
+              <div id="services-list" class="select-list" role="listbox" aria-label="Services"></div>
+            </section>
+          </div>
+
+          <div class="status-monitor panel-lite">
+            <div class="panel-lite-header">Live /status (std_msgs/String)</div>
+            <div id="status-latest" class="pre-box mono small-pre">(no messages yet)</div>
+            <div class="row compact split-row">
+              <span class="muted">Recent status messages</span>
+              <span id="status-count" class="muted">0</span>
+            </div>
+            <div class="scroll-box short">
+              <ul id="status-history" class="log-list">
+                <li class="muted">Waiting for messages...</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="tab-interact" class="tab-panel" data-tab-panel="interact">
+          <div class="panel-header-row">
+            <div>
+              <h2>Interact</h2>
+              <p class="muted">Publish to a selected topic or call a selected service using raw JSON.</p>
+            </div>
+          </div>
+
+          <div id="interact-empty" class="empty-state">
+            Select a topic or service in <strong>Explore</strong> to load an interaction widget.
+          </div>
+
+          <div id="interact-topic-section" class="interact-card hidden">
+            <div class="interact-header">Publish Topic</div>
+            <div class="form-grid">
+              <label for="interact-topic-name">Topic</label>
+              <input id="interact-topic-name" type="text" readonly>
+              <label for="interact-topic-type">Message Type</label>
+              <input id="interact-topic-type" type="text" readonly>
+            </div>
+            <label for="topic-payload-input" class="field-label">JSON Payload</label>
+            <textarea id="topic-payload-input" class="payload-editor mono" spellcheck="false">{}</textarea>
+            <div class="row compact">
+              <button id="topic-send-btn" class="primary" type="button">Send</button>
+            </div>
+            <div id="interact-topic-result" class="pre-box mono small-pre">(no publish yet)</div>
+          </div>
+
+          <div id="interact-service-section" class="interact-card hidden">
+            <div class="interact-header">Call Service</div>
+            <div class="form-grid">
+              <label for="interact-service-name">Service</label>
+              <input id="interact-service-name" type="text" readonly>
+              <label for="interact-service-type">Service Type</label>
+              <input id="interact-service-type" type="text" readonly>
+            </div>
+            <label for="service-request-input" class="field-label">JSON Request</label>
+            <textarea id="service-request-input" class="payload-editor mono" spellcheck="false">{}</textarea>
+            <div class="row compact">
+              <button id="service-call-btn" class="primary" type="button">Call</button>
+            </div>
+            <div id="service-response-output" class="pre-box mono small-pre">(no response yet)</div>
+          </div>
+        </section>
+
+        <section id="tab-run" class="tab-panel" data-tab-panel="run">
+          <div class="panel-header-row">
+            <div>
+              <h2>Run</h2>
+              <p class="muted">Browser-driven run controls are not implemented yet. Use these copyable commands.</p>
+            </div>
+          </div>
+
+          <div class="runbook-box">
+            <div class="runbook-item">
+              <code>./scripts/dev_launch.sh</code>
+              <button class="copy-btn" data-copy="./scripts/dev_launch.sh" type="button">Copy</button>
+            </div>
+            <div class="runbook-item">
+              <code>./scripts/dev_shell.sh</code>
+              <button class="copy-btn" data-copy="./scripts/dev_shell.sh" type="button">Copy</button>
+            </div>
+            <div class="runbook-item">
+              <code>colcon build --symlink-install</code>
+              <button class="copy-btn" data-copy="colcon build --symlink-install" type="button">Copy</button>
+            </div>
+            <div class="runbook-item">
+              <code>ros2 launch spike_workshop_instrument instrument.launch.py</code>
+              <button class="copy-btn" data-copy="ros2 launch spike_workshop_instrument instrument.launch.py" type="button">Copy</button>
+            </div>
+            <div id="copy-status" class="muted">Copy a command to clipboard.</div>
+          </div>
+
+          <div class="placeholder-box">
+            <div class="placeholder-title">Web terminal coming next</div>
+            <div class="muted">This tab will eventually provide an in-browser terminal/workflow launcher. For now, use the runbook commands above.</div>
+          </div>
+        </section>
+
+        <section id="tab-logs" class="tab-panel" data-tab-panel="logs">
+          <div class="panel-header-row">
+            <div>
+              <h2>Logs</h2>
+              <p class="muted">UI event log plus optional rosout or /ui/log subscriptions.</p>
+            </div>
+            <div class="row compact">
+              <button id="logs-sub-rosout-btn" type="button">Subscribe /rosout</button>
+              <button id="logs-sub-ui-btn" type="button">Subscribe /ui/log</button>
+              <button id="logs-unsub-btn" type="button">Stop Logs</button>
+            </div>
+          </div>
+
+          <div class="panel-lite">
+            <div class="panel-lite-header">ROS Log Source</div>
+            <div id="logs-source" class="muted">Log source: none</div>
+            <div class="scroll-box medium">
+              <ul id="logs-history" class="log-list">
+                <li class="muted">No log messages yet.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="panel-lite">
+            <div class="panel-lite-header">UI Event Log</div>
+            <div id="ui-log" class="scroll-box mono medium">(ready)</div>
+          </div>
+        </section>
+      </section>
+
+      <aside id="details-panel" class="details-panel panel" aria-label="Details panel">
+        <div class="details-header">
+          <div>
+            <div id="details-kind" class="details-kind">Details</div>
+            <div id="details-title" class="details-title">Nothing selected</div>
+          </div>
+        </div>
+        <div id="details-summary" class="muted">Select a node, topic, or service from Explore to inspect it.</div>
+        <div id="details-tags" class="details-tags"></div>
+        <div id="details-content" class="pre-box mono details-pre">{}</div>
+      </aside>
+    </main>
+  </div>
+</body>
+</html>

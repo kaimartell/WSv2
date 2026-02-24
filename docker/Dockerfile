@@ -32,6 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-colcon-common-extensions \
     python3-vcstool \
     ros-humble-ros-base \
+    ros-humble-rosapi \
+    ros-humble-rosbridge-server \
     ros-humble-rqt \
     ros-humble-rqt-graph \
     && (apt-get install -y --no-install-recommends python3-rosdep || apt-get install -y --no-install-recommends python3-rosdep2) \

@@ -1,7 +1,9 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -17,6 +19,9 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("execution_mode", default_value="host_score"),
         DeclareLaunchArgument("fifo_queue_size", default_value="32"),
         DeclareLaunchArgument("action_queue_size", default_value="64"),
+        DeclareLaunchArgument("enable_rosbridge", default_value="true"),
+        DeclareLaunchArgument("rosbridge_address", default_value="0.0.0.0"),
+        DeclareLaunchArgument("rosbridge_port", default_value="9090"),
         DeclareLaunchArgument("participant_id", default_value="1"),
         DeclareLaunchArgument("name", default_value="instrument"),
         DeclareLaunchArgument("mode", default_value="pulse"),
@@ -92,4 +97,26 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
-    return LaunchDescription(launch_args + [hw_node, instrument_node])
+    rosbridge_node = Node(
+        package="rosbridge_server",
+        executable="rosbridge_websocket",
+        name="rosbridge_websocket",
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("enable_rosbridge")),
+        parameters=[
+            {
+                "address": LaunchConfiguration("rosbridge_address"),
+                "port": ParameterValue(LaunchConfiguration("rosbridge_port"), value_type=int),
+            }
+        ],
+    )
+
+    rosapi_node = Node(
+        package="rosapi",
+        executable="rosapi_node",
+        name="rosapi_node",
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("enable_rosbridge")),
+    )
+
+    return LaunchDescription(launch_args + [hw_node, instrument_node, rosbridge_node, rosapi_node])

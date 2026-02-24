@@ -25,5 +25,6 @@ fi
 exec docker run --rm -it --name "${CONTAINER_NAME}" \
   -e ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-25}" \
   -e RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}" \
+  -p 9090:9090 \
   -v "${ROOT_DIR}/patterns:/patterns" \
   "${IMAGE_NAME}" "${CMD[@]}"
