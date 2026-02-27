@@ -12,6 +12,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/PlayPattern.srv"
   "srv/GeneratePattern.srv"
   "srv/GenerateScore.srv"
+  "srv/RunCommand.srv"
 )
 
 ament_export_dependencies(rosidl_default_runtime)

@@ -30,6 +30,7 @@
     logTopic: null,
     logConfig: null,
     logCallback: null,
+    topicSubscriptions: new Map(),
     publisherCache: new Map(),
     callbacks: {
       connectionState: null,
@@ -152,6 +153,14 @@
     }
   }
 
+  function unsubscribeAllTopicSubscriptions() {
+    for (const [topicName, entry] of state.topicSubscriptions.entries()) {
+      unsubscribeRosTopic(entry && entry.topicObj);
+      consoleLog("info", "Unsubscribed dynamic topic", { topicName });
+    }
+    state.topicSubscriptions.clear();
+  }
+
   function teardownTransport(options) {
     const opts = { closeSocket: false, ...options };
 
@@ -159,6 +168,7 @@
     unsubscribeRosTopic(state.logTopic);
     state.statusTopic = null;
     state.logTopic = null;
+    unsubscribeAllTopicSubscriptions();
     state.publisherCache.clear();
 
     const rosToClose = state.ros;
@@ -548,6 +558,67 @@
     return true;
   }
 
+  function subscribeTopic(topicName, messageType, callback) {
+    const name = String(topicName || "").trim();
+    const type = String(messageType || "").trim();
+    if (!name || !type || typeof callback !== "function") {
+      const msg = "subscribeTopic requires topicName, messageType, and callback.";
+      emitError(msg);
+      consoleLog("warn", msg, { topicName, messageType });
+      return false;
+    }
+    if (!state.connected || !state.ros) {
+      const msg = "Cannot subscribe topic: not connected.";
+      emitError(msg);
+      consoleLog("warn", msg, { topicName: name, messageType: type });
+      return false;
+    }
+
+    const existing = state.topicSubscriptions.get(name);
+    if (existing) {
+      unsubscribeRosTopic(existing.topicObj);
+      state.topicSubscriptions.delete(name);
+    }
+
+    try {
+      const topicObj = new ROSLIB.Topic({
+        ros: state.ros,
+        name,
+        messageType: type,
+      });
+      topicObj.subscribe((msg) => {
+        try {
+          callback(msg);
+        } catch (cbErr) {
+          console.error("[rosClient] subscribeTopic callback failed", cbErr);
+        }
+      });
+      state.topicSubscriptions.set(name, { topicObj, messageType: type, callback });
+      consoleLog("info", "Subscribed dynamic topic", { topicName: name, messageType: type });
+      return true;
+    } catch (err) {
+      const msg = formatError(err);
+      emitError(msg);
+      consoleLog("error", "subscribeTopic failed", { topicName: name, messageType: type, error: msg });
+      return false;
+    }
+  }
+
+  function unsubscribeTopic(topicName) {
+    const name = String(topicName || "").trim();
+    if (!name) {
+      return false;
+    }
+    const existing = state.topicSubscriptions.get(name);
+    if (!existing) {
+      return false;
+    }
+    unsubscribeRosTopic(existing.topicObj);
+    state.topicSubscriptions.delete(name);
+    consoleLog("info", "Unsubscribed dynamic topic", { topicName: name });
+    return true;
+  }
+
   function normalizeStringListResponse(response, preferredField) {
     if (response && Array.isArray(response[preferredField])) {
       return [...new Set(response[preferredField].map((x) => String(x)))].sort();
@@ -713,6 +784,8 @@
     callService,
     subscribeStatus,
     unsubscribeStatus,
+    subscribeTopic,
+    unsubscribeTopic,
     subscribeLogTopic,
     unsubscribeLogTopic,
     getTopics,

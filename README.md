@@ -15,6 +15,10 @@ ROS graph:
 - topics: `/actuate`, `/status`, `/done`, `/spike/state`
 - services: `/spike/ping`, `/instrument/list_patterns`, `/instrument/generate_score`, `/instrument/play_pattern`, `/instrument/play_score`, `/instrument/stop`
 
+UI backend graph:
+- nodes: `rosbridge_websocket`, `rosapi_node`, `edu_command_runner_node`
+- services: `/rosapi/*`, `/edu/run_command`
+
 
 ## Pre-Workshop Setup
 
@@ -72,21 +76,28 @@ USB auto-selection notes:
 This step may take a few minutes for the container to install all dependencies
 
 
-3. In container terminal #1, launch once:
+3. In container terminal #1, launch UI backend once:
+
+```bash
+ros2 launch spike_workshop_ui_backend ui_backend.launch.py
+```
+
+
+4. In container terminal #2, launch instrument demo (optional for UI-only introspection):
 
 ```bash
 ros2 launch spike_workshop_instrument instrument.launch.py
 ```
 
 
-4. Open a third terminal window and enter the docker container with:
+5. Open a third terminal window and enter the docker container with:
 
 ```bash
 docker exec -it spikews bash
 ```
 
 
-5. In this third terminal, verify connectivity:
+6. In this third terminal, verify connectivity:
 
 ```bash
 ros2 service call /spike/ping std_srvs/srv/Trigger "{}"
@@ -96,7 +107,7 @@ ros2 service call /instrument/list_patterns std_srvs/srv/Trigger "{}"
 
 ## Play an instrument
 
-Keep `ros2 launch spike_workshop_instrument instrument.launch.py` running in one container terminal, then use ROS services from a second terminal in the same container.
+Keep `ros2 launch spike_workshop_ui_backend ui_backend.launch.py` and `ros2 launch spike_workshop_instrument instrument.launch.py` running, then use ROS services from another terminal in the same container.
 
 ### 1) Play a preset (optional)
 
@@ -331,10 +342,14 @@ Think of it as a wiring diagram:
 Launch command:
 
 ```bash
+ros2 launch spike_workshop_ui_backend ui_backend.launch.py
 ros2 launch spike_workshop_instrument instrument.launch.py
 ```
 
 Starts:
+- `rosbridge_websocket`
+- `rosapi_node`
+- `edu_command_runner_node`
 - `instrument_node`
 - `spike_hw_client_node`
 

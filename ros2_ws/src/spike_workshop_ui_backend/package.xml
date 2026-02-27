@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>spike_workshop_ui_backend</name>
+  <version>0.1.0</version>
+  <description>UI backend launch package for rosbridge, rosapi, and workshop web UI helpers.</description>
+  <maintainer email="workshop@example.com">Workshop Team</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+  <depend>rosbridge_server</depend>
+  <depend>rosapi</depend>
+  <depend>spike_workshop_instrument</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

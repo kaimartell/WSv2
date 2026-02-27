@@ -24,13 +24,15 @@
           </div>
           <label for="ws-url" class="sr-only">Rosbridge URL</label>
           <input id="ws-url" type="text" value="ws://localhost:9090" autocomplete="off">
-          <button id="connect-btn" class="primary" type="button">Connect</button>
-          <button id="disconnect-btn" type="button">Disconnect</button>
+          <button id="connect-toggle" class="primary" type="button">Connect</button>
           <button id="details-toggle-btn" type="button" aria-expanded="false">Show Details</button>
         </div>
         <div class="row compact muted-line">
           <span class="kv">JS: <strong id="js-status">Waiting for JS handlers...</strong></span>
           <span class="kv">Selected: <strong id="selected-summary">None</strong></span>
+        </div>
+        <div class="row compact muted-line">
+          <span class="kv">Build: <strong id="build-stamp">2026-02-27T22:30:00Z-ui-debug-2</strong></span>
         </div>
       </div>
     </header>
@@ -41,7 +43,7 @@
           <button id="tab-btn-explore" class="tab-btn active" data-tab="explore" type="button">Explore</button>
           <button id="tab-btn-interact" class="tab-btn" data-tab="interact" type="button">Interact</button>
           <button id="tab-btn-run" class="tab-btn" data-tab="run" type="button">Run</button>
-          <button id="tab-btn-logs" class="tab-btn" data-tab="logs" type="button">Logs</button>
+          <button id="tab-btn-monitor" class="tab-btn" data-tab="monitor" type="button">Monitor</button>
         </nav>
         <div class="sidebar-note">
           Start in <strong>Explore</strong>, inspect the graph, then move to <strong>Interact</strong> to publish/call.
@@ -57,9 +59,18 @@
               <h2>Explore ROS Graph</h2>
               <p class="muted">Uses rosapi service calls via rosbridge to list and inspect nodes, topics, and services.</p>
             </div>
-            <div class="row compact">
+            <div class="row compact explore-controls">
+              <label for="explore-filter-input" class="sr-only">Search nodes topics services</label>
+              <input id="explore-filter-input" type="search" placeholder="Filter nodes/topics/services">
               <button id="explore-refresh-btn" class="primary" type="button">Refresh</button>
             </div>
+          </div>
+
+          <div class="row compact filter-row">
+            <label class="check-inline" for="services-node-only-toggle">
+              <input id="services-node-only-toggle" type="checkbox">
+              <span>Show services for selected node only</span>
+            </label>
           </div>
 
           <div class="three-col-lists">
@@ -75,7 +86,7 @@
 
             <section class="list-card">
               <div class="list-card-header">Services <span id="services-count" class="badge">0</span></div>
-              <div id="services-list" class="select-list" role="listbox" aria-label="Services"></div>
+              <div id="services-list" class="select-list service-list" role="listbox" aria-label="Services"></div>
             </section>
           </div>
 
@@ -114,6 +125,22 @@
               <label for="interact-topic-type">Message Type</label>
               <input id="interact-topic-type" type="text" readonly>
             </div>
+            <div class="row compact">
+              <label for="topic-template-select">Insert template</label>
+              <select id="topic-template-select">
+                <option value="std_msgs/String">std_msgs/String</option>
+                <option value="std_msgs/Empty">std_msgs/Empty</option>
+                <option value="geometry_msgs/Twist">geometry_msgs/Twist</option>
+                <option value="std_msgs/Bool">std_msgs/Bool</option>
+                <option value="std_msgs/Float32">std_msgs/Float32</option>
+              </select>
+              <button id="topic-template-insert-btn" type="button">Insert Template</button>
+              <button id="topic-template-copy-btn" type="button">Copy Example</button>
+            </div>
+            <div class="panel-lite">
+              <div class="panel-lite-header">Example Payload</div>
+              <div id="topic-template-preview" class="pre-box mono small-pre">{}</div>
+            </div>
             <label for="topic-payload-input" class="field-label">JSON Payload</label>
             <textarea id="topic-payload-input" class="payload-editor mono" spellcheck="false">{}</textarea>
             <div class="row compact">
@@ -132,6 +159,9 @@
             </div>
             <label for="service-request-input" class="field-label">JSON Request</label>
             <textarea id="service-request-input" class="payload-editor mono" spellcheck="false">{}</textarea>
+            <div class="muted">
+              Full request-schema generation is a future enhancement. Use raw JSON for now (default <code>{}</code>).
+            </div>
             <div class="row compact">
               <button id="service-call-btn" class="primary" type="button">Call</button>
             </div>
@@ -143,56 +173,90 @@
           <div class="panel-header-row">
             <div>
               <h2>Run</h2>
-              <p class="muted">Browser-driven run controls are not implemented yet. Use these copyable commands.</p>
-            </div>
-          </div>
-
-          <div class="runbook-box">
-            <div class="runbook-item">
-              <code>./scripts/dev_launch.sh</code>
-              <button class="copy-btn" data-copy="./scripts/dev_launch.sh" type="button">Copy</button>
-            </div>
-            <div class="runbook-item">
-              <code>./scripts/dev_shell.sh</code>
-              <button class="copy-btn" data-copy="./scripts/dev_shell.sh" type="button">Copy</button>
-            </div>
-            <div class="runbook-item">
-              <code>colcon build --symlink-install</code>
-              <button class="copy-btn" data-copy="colcon build --symlink-install" type="button">Copy</button>
-            </div>
-            <div class="runbook-item">
-              <code>ros2 launch spike_workshop_instrument instrument.launch.py</code>
-              <button class="copy-btn" data-copy="ros2 launch spike_workshop_instrument instrument.launch.py" type="button">Copy</button>
-            </div>
-            <div id="copy-status" class="muted">Copy a command to clipboard.</div>
-          </div>
-
-          <div class="placeholder-box">
-            <div class="placeholder-title">Web terminal coming next</div>
-            <div class="muted">This tab will eventually provide an in-browser terminal/workflow launcher. For now, use the runbook commands above.</div>
-          </div>
-        </section>
-
-        <section id="tab-logs" class="tab-panel" data-tab-panel="logs">
-          <div class="panel-header-row">
-            <div>
-              <h2>Logs</h2>
-              <p class="muted">UI event log plus optional rosout or /ui/log subscriptions.</p>
-            </div>
-            <div class="row compact">
-              <button id="logs-sub-rosout-btn" type="button">Subscribe /rosout</button>
-              <button id="logs-sub-ui-btn" type="button">Subscribe /ui/log</button>
-              <button id="logs-unsub-btn" type="button">Stop Logs</button>
+              <p class="muted">Beginner-safe command runner (allowlisted commands only).</p>
             </div>
           </div>
 
           <div class="panel-lite">
-            <div class="panel-lite-header">ROS Log Source</div>
-            <div id="logs-source" class="muted">Log source: none</div>
-            <div class="scroll-box medium">
-              <ul id="logs-history" class="log-list">
-                <li class="muted">No log messages yet.</li>
-              </ul>
+            <div class="panel-lite-header">Launch Systems</div>
+            <div class="row compact">
+              <button id="run-launch-ui-btn" type="button">Launch UI Backend</button>
+              <button id="run-launch-instrument-btn" type="button">Launch Instrument</button>
+              <span id="run-launch-running" class="muted hidden">Running...</span>
+            </div>
+          </div>
+
+          <div class="panel-lite">
+            <div class="panel-lite-header">Graph</div>
+            <div class="row compact">
+              <button id="run-list-nodes-btn" type="button">List Nodes</button>
+              <button id="run-list-topics-btn" type="button">List Topics</button>
+              <button id="run-list-services-btn" type="button">List Services</button>
+            </div>
+          </div>
+
+          <div id="run-topic-tools" class="panel-lite hidden">
+            <div class="panel-lite-header">Topic Tools</div>
+            <div class="muted">Selected topic: <code id="run-selected-topic">(none)</code></div>
+            <div class="row compact">
+              <button id="run-topic-info-btn" type="button">Topic Info</button>
+              <button id="run-topic-hz-btn" type="button">Topic Hz (5s)</button>
+            </div>
+          </div>
+
+          <div class="panel-lite">
+            <div class="panel-lite-header">Command Output</div>
+            <div class="muted">Executed CLI</div>
+            <div id="run-cli-preview" class="pre-box mono small-pre">(none yet)</div>
+            <div class="muted">Output</div>
+            <div id="run-command-output" class="scroll-box mono medium">(no command run yet)</div>
+          </div>
+
+          <div class="placeholder-box">
+            <div class="placeholder-title">Runbook</div>
+            <div class="runbook-box">
+              <div class="runbook-item">
+                <code>./scripts/dev_launch.sh</code>
+                <button class="copy-btn" data-copy="./scripts/dev_launch.sh" type="button">Copy</button>
+              </div>
+              <div class="runbook-item">
+                <code>./scripts/dev_launch.sh instrument.launch.py</code>
+                <button class="copy-btn" data-copy="./scripts/dev_launch.sh instrument.launch.py" type="button">Copy</button>
+              </div>
+              <div class="runbook-item">
+                <code>./scripts/dev_shell.sh</code>
+                <button class="copy-btn" data-copy="./scripts/dev_shell.sh" type="button">Copy</button>
+              </div>
+            </div>
+            <div id="copy-status" class="muted">Copy a command to clipboard.</div>
+          </div>
+        </section>
+
+        <section id="tab-monitor" class="tab-panel" data-tab-panel="monitor">
+          <div class="panel-header-row">
+            <div>
+              <h2>Monitor</h2>
+              <p class="muted">Topic Echo monitor: select topics and stream the latest messages (max 3 active).</p>
+            </div>
+          </div>
+
+          <div class="panel-lite">
+            <div class="panel-lite-header">Topic Echo Controls</div>
+            <div class="row compact">
+              <label for="monitor-topic-select" class="muted">Select topics to echo</label>
+              <span id="monitor-active-count" class="muted">0 / 3 active</span>
+            </div>
+            <select id="monitor-topic-select" class="monitor-topic-select mono" multiple size="10"></select>
+            <div class="row compact">
+              <button id="monitor-start-btn" type="button">Start Echo</button>
+              <button id="monitor-stop-btn" type="button">Stop Selected</button>
+            </div>
+          </div>
+
+          <div class="panel-lite">
+            <div class="panel-lite-header">Active Echo Streams</div>
+            <div id="monitor-streams" class="monitor-streams">
+              <div class="muted">No active topic echo streams.</div>
             </div>
           </div>
 

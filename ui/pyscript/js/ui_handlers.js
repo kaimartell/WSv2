@@ -1,7 +1,21 @@
 (function () {
   const STATUS_HISTORY_MAX = 20;
-  const ROS_LOG_HISTORY_MAX = 40;
   const UI_EVENT_LOG_MAX = 200;
+  const TOPIC_ECHO_MAX_ACTIVE = 3;
+  const TOPIC_ECHO_HISTORY_MAX = 20;
+  const EDU_RUN_SERVICE_NAME = "/edu/run_command";
+  const EDU_RUN_SERVICE_TYPE = "spike_workshop_interfaces/srv/RunCommand";
+
+  const TOPIC_TEMPLATES = {
+    "std_msgs/String": { data: "hello" },
+    "std_msgs/Empty": {},
+    "geometry_msgs/Twist": {
+      linear: { x: 0.0, y: 0.0, z: 0.0 },
+      angular: { x: 0.0, y: 0.0, z: 0.0 },
+    },
+    "std_msgs/Bool": { data: true },
+    "std_msgs/Float32": { data: 0.0 },
+  };
 
   const state = {
     rosClient: null,
@@ -18,8 +32,20 @@
       detailsByKey: new Map(),
     },
     statusHistory: [],
-    rosLogs: [],
     uiEvents: ["(ready)"],
+    filterText: "",
+    servicesNodeOnly: false,
+    monitor: {
+      active: new Map(), // topicName -> { messageType, messages: [{t, text}] }
+    },
+    connection: {
+      phase: "idle",
+      connected: false,
+      url: "",
+    },
+    run: {
+      launchPending: false,
+    },
     lastConnected: false,
   };
 
@@ -41,6 +67,70 @@
     }
   }
 
+  function safeJsonParse(raw, fallback) {
+    try {
+      return JSON.parse(String(raw));
+    } catch (_err) {
+      return fallback;
+    }
+  }
+
+  function prettyJson(value) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (_err) {
+      return String(value);
+    }
+  }
+
+  function normalizeStringArray(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return [...new Set(value.map((x) => String(x)))].sort();
+  }
+
+  function normalizeMaybeStringArray(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    const out = [];
+    for (const item of value) {
+      if (typeof item === "string") {
+        out.push(item);
+        continue;
+      }
+      if (Array.isArray(item) && item.length) {
+        out.push(String(item[0]));
+        continue;
+      }
+      if (item && typeof item === "object") {
+        if (typeof item.topic === "string") {
+          out.push(item.topic);
+          continue;
+        }
+        if (typeof item.name === "string") {
+          out.push(item.name);
+          continue;
+        }
+      }
+    }
+    return normalizeStringArray(out);
+  }
+
+  function normalizeArrayFromResponse(response, preferredField) {
+    if (response && Array.isArray(response[preferredField])) {
+      return normalizeMaybeStringArray(response[preferredField]);
+    }
+    const values = Object.values(response || {});
+    for (const v of values) {
+      if (Array.isArray(v)) {
+        return normalizeMaybeStringArray(v);
+      }
+    }
+    return [];
+  }
+
   function setConnDot(kind) {
     const dot = byId("conn-dot");
     if (!dot) {
@@ -50,6 +140,14 @@
     if (kind) {
       dot.classList.add(kind);
     }
+  }
+
+  function setJsStatus(textVal) {
+    text("js-status", textVal);
+  }
+
+  function renderUiEventLog() {
+    text("ui-log", state.uiEvents.join("\n"));
   }
 
   function addUiEvent(message, alsoConsoleLevel) {
@@ -89,40 +187,16 @@
     showError("");
   }
 
-  function safeJsonParse(raw, fallback) {
-    try {
-      return JSON.parse(String(raw));
-    } catch (_err) {
-      return fallback;
+  function getConnectionElements() {
+    const toggle = byId("connect-toggle");
+    const wsUrl = byId("ws-url");
+    if (!toggle || !wsUrl) {
+      const msg = "[UI] missing #connect-toggle or #ws-url";
+      console.error(msg);
+      showError(msg);
+      return null;
     }
-  }
-
-  function prettyJson(value) {
-    try {
-      return JSON.stringify(value, null, 2);
-    } catch (_err) {
-      return String(value);
-    }
-  }
-
-  function normalizeStringArray(value) {
-    if (!Array.isArray(value)) {
-      return [];
-    }
-    return [...new Set(value.map((x) => String(x)))].sort();
-  }
-
-  function normalizeArrayFromResponse(response, preferredField) {
-    if (response && Array.isArray(response[preferredField])) {
-      return normalizeStringArray(response[preferredField]);
-    }
-    const values = Object.values(response || {});
-    for (const v of values) {
-      if (Array.isArray(v)) {
-        return normalizeStringArray(v);
-      }
-    }
-    return [];
+    return { toggle, wsUrl };
   }
 
   function getRosClient() {
@@ -158,14 +232,9 @@
             reject(new Error(err));
             return;
           }
-          try {
-            resolve(safeJsonParse(jsonText || "{}", {}));
-          } catch (parseErr) {
-            reject(parseErr);
-          }
+          resolve(safeJsonParse(jsonText || "{}", {}));
         });
         if (started === false) {
-          // invoker usually also triggers an error callback; keep a synchronous fallback.
           reject(new Error("Request did not start."));
         }
       } catch (err) {
@@ -198,36 +267,82 @@
     );
   }
 
-  function renderUiEventLog() {
-    text("ui-log", state.uiEvents.join("\n"));
+  function filterItems(items) {
+    const f = state.filterText.trim().toLowerCase();
+    if (!f) {
+      return items;
+    }
+    return items.filter((name) => String(name).toLowerCase().includes(f));
   }
 
-  function renderRosLogs() {
-    text("logs-source", state.logsSourceText || "Log source: none");
-    const list = byId("logs-history");
-    if (!list) {
-      return;
+  function getServiceBaseList() {
+    if (!state.servicesNodeOnly) {
+      return state.graph.services;
     }
-    list.innerHTML = "";
-    if (!state.rosLogs.length) {
-      const li = document.createElement("li");
-      li.className = "muted";
-      li.textContent = "No log messages yet.";
-      list.appendChild(li);
-      return;
+    if (!state.selected || state.selected.kind !== "node") {
+      return [];
     }
-    for (const item of state.rosLogs) {
-      const li = document.createElement("li");
-      li.className = "mono";
-      li.textContent = `[${item.t}] ${item.text}`;
-      list.appendChild(li);
+    const details = detailsCacheGet("node", state.selected.name);
+    if (!details || !details.data) {
+      return [];
     }
+    return normalizeMaybeStringArray(details.data.services || []);
   }
 
-  function pushRosLog(textVal) {
-    state.rosLogs.unshift({ t: new Date().toLocaleTimeString(), text: String(textVal || "") });
-    state.rosLogs = state.rosLogs.slice(0, ROS_LOG_HISTORY_MAX);
-    renderRosLogs();
+  function renderList(containerId, items, kind) {
+    const container = byId(containerId);
+    if (!container) {
+      return;
+    }
+    container.innerHTML = "";
+    if (!items.length) {
+      const div = document.createElement("div");
+      div.className = "empty-list";
+      div.textContent = "No items loaded.";
+      container.appendChild(div);
+      return;
+    }
+
+    for (const name of items) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "list-item";
+      button.dataset.kind = kind;
+      button.dataset.name = name;
+      button.textContent = name;
+      button.title = name;
+      button.addEventListener("click", () => {
+        setSelected({ kind, name });
+      });
+      container.appendChild(button);
+    }
+    renderListSelections();
+  }
+
+  function renderListSelections() {
+    const activeKey = state.selected ? itemKey(state.selected.kind, state.selected.name) : null;
+    document.querySelectorAll(".list-item").forEach((el) => {
+      const key = itemKey(el.dataset.kind, el.dataset.name);
+      el.classList.toggle("active", !!activeKey && key === activeKey);
+    });
+  }
+
+  function renderExploreCounts(visibleNodes, visibleTopics, visibleServices, serviceBaseCount) {
+    text("nodes-count", `${visibleNodes.length}/${state.graph.nodes.length}`);
+    text("topics-count", `${visibleTopics.length}/${state.graph.topics.length}`);
+    text("services-count", `${visibleServices.length}/${serviceBaseCount}`);
+  }
+
+  function renderGraphLists() {
+    const visibleNodes = filterItems(state.graph.nodes);
+    const visibleTopics = filterItems(state.graph.topics);
+    const serviceBase = getServiceBaseList();
+    const visibleServices = filterItems(serviceBase);
+
+    renderList("nodes-list", visibleNodes, "node");
+    renderList("topics-list", visibleTopics, "topic");
+    renderList("services-list", visibleServices, "service");
+    renderExploreCounts(visibleNodes, visibleTopics, visibleServices, serviceBase.length);
   }
 
   function renderStatusHistory() {
@@ -260,19 +375,55 @@
     renderStatusHistory();
   }
 
-  function setJsStatus(textVal) {
-    text("js-status", textVal);
+  function updateConnectionToggle() {
+    const elements = getConnectionElements();
+    if (!elements) {
+      return;
+    }
+    const btn = elements.toggle;
+    const urlInput = elements.wsUrl;
+
+    const phase = state.connection.phase;
+    const connected = !!state.connection.connected;
+
+    btn.classList.remove("primary", "muted-action");
+
+    if (phase === "connecting") {
+      btn.textContent = "Connecting...";
+      btn.disabled = true;
+      btn.classList.add("primary");
+    } else if (connected) {
+      btn.textContent = "Disconnect";
+      btn.disabled = false;
+      btn.classList.add("muted-action");
+    } else {
+      btn.textContent = "Connect";
+      btn.disabled = false;
+      btn.classList.add("primary");
+    }
+
+    // Requirement: lock URL while connected or connecting.
+    urlInput.disabled = connected || phase === "connecting";
+  }
+
+  function clearMonitorState() {
+    state.monitor.active.clear();
+    renderMonitorStreams();
+    renderMonitorActiveCount();
   }
 
   function renderConnectionFromPayload(payload) {
     const phase = String((payload && payload.phase) || "idle");
     const msg = String((payload && payload.message) || "");
     const url = String((payload && payload.url) || "");
+    const connectedNow = !!(payload && payload.connected);
+
+    state.connection.phase = phase;
+    state.connection.connected = connectedNow;
+    state.connection.url = url;
+
     if (url) {
-      const input = byId("ws-url");
-      if (input) {
-        input.value = url;
-      }
+      inputValue("ws-url", url);
     }
 
     if (phase === "connected") {
@@ -289,31 +440,21 @@
       text("conn-text", msg || "Disconnected");
     }
 
-    const connectedNow = !!payload.connected;
+    updateConnectionToggle();
+
     if (connectedNow && !state.lastConnected) {
       addUiEvent("Connected. Refreshing ROS graph...", "log");
       refreshExplore().catch((err) => {
         showError(`Explore refresh failed after connect: ${err.message || err}`);
       });
     }
-    state.lastConnected = connectedNow;
-  }
 
-  function setSelected(selected) {
-    state.selected = selected;
-    const label = selected ? `${selected.kind}: ${selected.name}` : "None";
-    text("selected-summary", label);
-    renderListSelections();
-    renderInteractTab();
-    if (selected) {
-      openDetails(true);
-      loadSelectedDetails().catch((err) => {
-        showError(`Details load failed: ${err.message || err}`);
-        addUiEvent(`Details load failed for ${selected.kind} ${selected.name}: ${err.message || err}`, "error");
-      });
-    } else {
-      renderDetailsPanel(null);
+    if (!connectedNow && state.lastConnected) {
+      clearMonitorState();
+      addUiEvent("Disconnected. Cleared monitor subscriptions.", "log");
     }
+
+    state.lastConnected = connectedNow;
   }
 
   function itemKey(kind, name) {
@@ -326,66 +467,6 @@
 
   function detailsCacheSet(kind, name, value) {
     state.metadata.detailsByKey.set(itemKey(kind, name), value);
-  }
-
-  function renderList(containerId, items, kind) {
-    const container = byId(containerId);
-    if (!container) {
-      return;
-    }
-    container.innerHTML = "";
-    if (!items.length) {
-      const div = document.createElement("div");
-      div.className = "empty-list";
-      div.textContent = "No items loaded.";
-      container.appendChild(div);
-      return;
-    }
-    for (const name of items) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "list-item";
-      button.dataset.kind = kind;
-      button.dataset.name = name;
-      button.textContent = name;
-      button.addEventListener("click", () => {
-        setSelected({ kind, name });
-      });
-      container.appendChild(button);
-    }
-    renderListSelections();
-  }
-
-  function renderListSelections() {
-    const activeKey = state.selected ? itemKey(state.selected.kind, state.selected.name) : null;
-    document.querySelectorAll(".list-item").forEach((el) => {
-      const key = itemKey(el.dataset.kind, el.dataset.name);
-      el.classList.toggle("active", !!activeKey && key === activeKey);
-    });
-  }
-
-  function renderExploreCounts() {
-    text("nodes-count", String(state.graph.nodes.length));
-    text("topics-count", String(state.graph.topics.length));
-    text("services-count", String(state.graph.services.length));
-  }
-
-  async function refreshExplore() {
-    clearError();
-    addUiEvent("Refreshing nodes/topics/services via rosapi...", "log");
-    const [nodes, topics, services] = await Promise.all([
-      rosCallList("getNodes"),
-      rosCallList("getTopics"),
-      rosCallList("getServices"),
-    ]);
-    state.graph.nodes = Array.isArray(nodes) ? nodes : [];
-    state.graph.topics = Array.isArray(topics) ? topics : [];
-    state.graph.services = Array.isArray(services) ? services : [];
-    renderList("nodes-list", state.graph.nodes, "node");
-    renderList("topics-list", state.graph.topics, "topic");
-    renderList("services-list", state.graph.services, "service");
-    renderExploreCounts();
-    addUiEvent(`Explore refresh complete: ${state.graph.nodes.length} nodes, ${state.graph.topics.length} topics, ${state.graph.services.length} services`, "log");
   }
 
   function parseTypeField(response) {
@@ -408,6 +489,7 @@
     if (cached) {
       return cached;
     }
+
     const [typeResp, pubsResp, subsResp] = await Promise.all([
       rosCallObject("getTopicType", topicName),
       rosCallObject("getPublishers", topicName),
@@ -461,6 +543,7 @@
     if (serviceType) {
       state.metadata.serviceTypeByName.set(serviceName, serviceType);
     }
+
     const details = {
       kind: "service",
       name: serviceName,
@@ -487,17 +570,30 @@
     if (cached) {
       return cached;
     }
+
     const resp = await rosCallObject("getNodeDetails", nodeName);
-    const publishing = normalizeArrayFromResponse({ publishing: resp.publishing || resp.publishers || [] }, "publishing");
-    const subscribing = normalizeArrayFromResponse({ subscribing: resp.subscribing || resp.subscribers || [] }, "subscribing");
-    const services = normalizeArrayFromResponse({ services: resp.services || [] }, "services");
+    const publishing = normalizeMaybeStringArray(
+      resp.publishing || resp.publishers || resp.publishing_topics || resp.publications || []
+    );
+    const subscribing = normalizeMaybeStringArray(
+      resp.subscribing || resp.subscribers || resp.subscribing_topics || resp.subscriptions || []
+    );
+    const services = normalizeMaybeStringArray(resp.services || resp.service_names || []);
+    const associatedTopics = normalizeStringArray([...publishing, ...subscribing]);
+
     const details = {
       kind: "node",
       name: nodeName,
-      summary: `${publishing.length} pubs | ${subscribing.length} subs | ${services.length} svcs`,
-      tags: [`publishing: ${publishing.length}`, `subscribing: ${subscribing.length}`, `services: ${services.length}`],
+      summary: `${associatedTopics.length} topics | ${services.length} services`,
+      tags: [
+        `topics: ${associatedTopics.length}`,
+        `publishing: ${publishing.length}`,
+        `subscribing: ${subscribing.length}`,
+        `services: ${services.length}`,
+      ],
       data: {
         node: nodeName,
+        associated_topics: associatedTopics,
         publishing,
         subscribing,
         services,
@@ -514,6 +610,7 @@
       renderDetailsPanel(null);
       return;
     }
+
     const { kind, name } = state.selected;
     let details;
     if (kind === "topic") {
@@ -525,8 +622,12 @@
     } else {
       details = null;
     }
+
     renderDetailsPanel(details);
     renderInteractTab();
+    if (state.servicesNodeOnly && kind === "node") {
+      renderGraphLists();
+    }
   }
 
   function renderDetailsPanel(details) {
@@ -559,39 +660,23 @@
     }
   }
 
-  function ensureTopicPayloadTemplate(topicName, messageType) {
-    const textarea = byId("topic-payload-input");
-    if (!textarea) {
-      return;
-    }
-    const current = String(textarea.value || "").trim();
-    const isEmpty = !current || current === "{}";
-    if (!isEmpty && textarea.dataset.topicName === topicName && textarea.dataset.messageType === messageType) {
-      return;
-    }
-    let template = {};
-    if (messageType === "std_msgs/String") {
-      template = { data: "hello" };
-    } else if (messageType === "std_msgs/Empty") {
-      template = {};
-    }
-    textarea.value = prettyJson(template);
-    textarea.dataset.topicName = topicName;
-    textarea.dataset.messageType = messageType || "";
-  }
+  function setSelected(selected) {
+    state.selected = selected;
+    const label = selected ? `${selected.kind}: ${selected.name}` : "None";
+    text("selected-summary", label);
+    renderListSelections();
+    renderInteractTab();
+    renderRunTopicTools();
 
-  function ensureServiceRequestTemplate(serviceName, serviceType) {
-    const textarea = byId("service-request-input");
-    if (!textarea) {
+    if (selected) {
+      openDetails(true);
+      loadSelectedDetails().catch((err) => {
+        showError(`Details load failed: ${err.message || err}`);
+        addUiEvent(`Details load failed for ${selected.kind} ${selected.name}: ${err.message || err}`, "error");
+      });
       return;
     }
-    const current = String(textarea.value || "").trim();
-    const changedSelection = textarea.dataset.serviceName !== serviceName || textarea.dataset.serviceType !== (serviceType || "");
-    if (!current || current === "{}" || changedSelection) {
-      textarea.value = prettyJson({});
-    }
-    textarea.dataset.serviceName = serviceName;
-    textarea.dataset.serviceType = serviceType || "";
+    renderDetailsPanel(null);
   }
 
   async function ensureTopicType(topicName) {
@@ -618,6 +703,57 @@
     return t || "";
   }
 
+  function getTopicTemplate(messageType) {
+    return TOPIC_TEMPLATES[messageType] || {};
+  }
+
+  function updateTopicTemplatePreview() {
+    const select = byId("topic-template-select");
+    const type = String((select && select.value) || "std_msgs/String");
+    text("topic-template-preview", prettyJson(getTopicTemplate(type)));
+  }
+
+  function setTopicTemplateSelect(messageType) {
+    const select = byId("topic-template-select");
+    if (!select) {
+      return;
+    }
+    const type = String(messageType || "").trim();
+    const hasOption = Array.from(select.options).some((opt) => opt.value === type);
+    select.value = hasOption ? type : "std_msgs/String";
+    updateTopicTemplatePreview();
+  }
+
+  function ensureTopicPayloadTemplate(topicName, messageType) {
+    const textarea = byId("topic-payload-input");
+    if (!textarea) {
+      return;
+    }
+    const current = String(textarea.value || "").trim();
+    const changedSelection =
+      textarea.dataset.topicName !== topicName || textarea.dataset.messageType !== (messageType || "");
+    if (!current || current === "{}" || changedSelection) {
+      textarea.value = prettyJson(getTopicTemplate(messageType));
+    }
+    textarea.dataset.topicName = topicName;
+    textarea.dataset.messageType = messageType || "";
+  }
+
+  function ensureServiceRequestTemplate(serviceName, serviceType) {
+    const textarea = byId("service-request-input");
+    if (!textarea) {
+      return;
+    }
+    const current = String(textarea.value || "").trim();
+    const changedSelection =
+      textarea.dataset.serviceName !== serviceName || textarea.dataset.serviceType !== (serviceType || "");
+    if (!current || current === "{}" || changedSelection) {
+      textarea.value = prettyJson({});
+    }
+    textarea.dataset.serviceName = serviceName;
+    textarea.dataset.serviceType = serviceType || "";
+  }
+
   function renderInteractTab() {
     const selected = state.selected;
     const empty = byId("interact-empty");
@@ -641,11 +777,14 @@
       inputValue("interact-topic-name", selected.name);
       const knownType = state.metadata.topicTypeByName.get(selected.name) || "";
       inputValue("interact-topic-type", knownType || "(loading topic type...)");
+      setTopicTemplateSelect(knownType);
       ensureTopicPayloadTemplate(selected.name, knownType);
+
       if (!knownType) {
         ensureTopicType(selected.name)
           .then((t) => {
             inputValue("interact-topic-type", t || "(unknown)");
+            setTopicTemplateSelect(t || "");
             ensureTopicPayloadTemplate(selected.name, t || "");
           })
           .catch((err) => {
@@ -678,6 +817,112 @@
 
     empty.classList.remove("hidden");
     empty.textContent = "Select a topic or service in Explore to load an interaction widget (nodes are inspect-only).";
+  }
+
+  function getSelectedTopicName() {
+    if (!state.selected || state.selected.kind !== "topic") {
+      return "";
+    }
+    return String(state.selected.name || "").trim();
+  }
+
+  function renderRunTopicTools() {
+    const topicTools = byId("run-topic-tools");
+    const topicLabel = byId("run-selected-topic");
+    if (!topicTools || !topicLabel) {
+      return;
+    }
+    const topicName = getSelectedTopicName();
+    if (!topicName) {
+      topicTools.classList.add("hidden");
+      topicLabel.textContent = "(none)";
+      return;
+    }
+    topicTools.classList.remove("hidden");
+    topicLabel.textContent = topicName;
+  }
+
+  function setRunLaunchIndicator(isRunning, labelText) {
+    const indicator = byId("run-launch-running");
+    if (!indicator) {
+      return;
+    }
+    indicator.textContent = labelText || "Running...";
+    indicator.classList.toggle("hidden", !isRunning);
+    state.run.launchPending = !!isRunning;
+  }
+
+  function getRunCliPreview(commandId, argument) {
+    if (commandId === "list_nodes") {
+      return "ros2 node list";
+    }
+    if (commandId === "list_topics") {
+      return "ros2 topic list";
+    }
+    if (commandId === "list_services") {
+      return "ros2 service list";
+    }
+    if (commandId === "launch_ui_backend") {
+      return "ros2 launch spike_workshop_ui_backend ui_backend.launch.py";
+    }
+    if (commandId === "launch_instrument") {
+      return "ros2 launch spike_workshop_instrument instrument.launch.py";
+    }
+    if (commandId === "topic_info") {
+      return `ros2 topic info ${argument}`;
+    }
+    if (commandId === "topic_hz") {
+      return `ros2 topic hz ${argument}`;
+    }
+    if (commandId.startsWith("topic_info:")) {
+      return `ros2 topic info ${commandId.split(":", 2)[1] || argument}`;
+    }
+    if (commandId.startsWith("topic_hz:")) {
+      return `ros2 topic hz ${commandId.split(":", 2)[1] || argument}`;
+    }
+    return commandId;
+  }
+
+  async function runEduCommand(commandId, argument, options) {
+    const opts = { isLaunch: false, ...options };
+    const arg = String(argument || "").trim();
+    const preview = getRunCliPreview(commandId, arg);
+    text("run-cli-preview", `$ ${preview}`);
+    text("run-command-output", "(running...)");
+
+    if (opts.isLaunch) {
+      setRunLaunchIndicator(true, "Running launch command...");
+    }
+
+    try {
+      const response = await rosCallService(
+        EDU_RUN_SERVICE_NAME,
+        EDU_RUN_SERVICE_TYPE,
+        {
+          command_id: commandId,
+          argument: arg,
+        }
+      );
+      const success = !!(response && response.success);
+      const output = String((response && response.output) || "(no output)");
+      text("run-command-output", output);
+      if (success) {
+        clearError();
+        addUiEvent(`Run command succeeded: ${commandId}`, "log");
+      } else {
+        showError(`Run command failed: ${commandId}`);
+        addUiEvent(`Run command failed: ${commandId}`, "error");
+      }
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      text("run-command-output", `(error) ${msg}`);
+      showError(`Run command error: ${msg}`);
+      addUiEvent(`Run command error (${commandId}): ${msg}`, "error");
+    } finally {
+      if (opts.isLaunch) {
+        setRunLaunchIndicator(false, "Running...");
+      }
+    }
   }
 
   function setActiveTab(tabName) {
@@ -727,13 +972,234 @@
     }
   }
 
+  function formatTopicMessage(msg) {
+    if (msg && typeof msg === "object" && Object.keys(msg).length === 1 && typeof msg.data === "string") {
+      return msg.data;
+    }
+    return prettyJson(msg);
+  }
+
+  function renderMonitorActiveCount() {
+    text("monitor-active-count", `${state.monitor.active.size} / ${TOPIC_ECHO_MAX_ACTIVE} active`);
+  }
+
+  function renderMonitorTopicOptions() {
+    const select = byId("monitor-topic-select");
+    if (!select) {
+      return;
+    }
+
+    const previous = new Set(Array.from(select.selectedOptions).map((opt) => opt.value));
+    select.innerHTML = "";
+
+    for (const topicName of state.graph.topics) {
+      const option = document.createElement("option");
+      option.value = topicName;
+      option.textContent = topicName;
+      if (previous.has(topicName)) {
+        option.selected = true;
+      }
+      select.appendChild(option);
+    }
+  }
+
+  function renderMonitorStreams() {
+    const root = byId("monitor-streams");
+    if (!root) {
+      return;
+    }
+
+    root.innerHTML = "";
+    const entries = Array.from(state.monitor.active.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    if (!entries.length) {
+      const empty = document.createElement("div");
+      empty.className = "muted";
+      empty.textContent = "No active topic echo streams.";
+      root.appendChild(empty);
+      return;
+    }
+
+    for (const [topicName, stream] of entries) {
+      const card = document.createElement("div");
+      card.className = "monitor-stream-card";
+
+      const head = document.createElement("div");
+      head.className = "monitor-stream-head";
+
+      const titleWrap = document.createElement("div");
+      const title = document.createElement("div");
+      title.className = "monitor-topic mono";
+      title.textContent = topicName;
+      const meta = document.createElement("div");
+      meta.className = "monitor-meta mono";
+      meta.textContent = `${stream.messageType} | ${stream.messages.length}/${TOPIC_ECHO_HISTORY_MAX}`;
+      titleWrap.appendChild(title);
+      titleWrap.appendChild(meta);
+
+      const stopBtn = document.createElement("button");
+      stopBtn.type = "button";
+      stopBtn.textContent = "Stop";
+      stopBtn.addEventListener("click", () => {
+        stopEchoTopic(topicName, true);
+      });
+
+      head.appendChild(titleWrap);
+      head.appendChild(stopBtn);
+      card.appendChild(head);
+
+      const box = document.createElement("div");
+      box.className = "scroll-box short";
+      const list = document.createElement("ul");
+      list.className = "log-list";
+
+      if (!stream.messages.length) {
+        const li = document.createElement("li");
+        li.className = "muted";
+        li.textContent = "Waiting for messages...";
+        list.appendChild(li);
+      } else {
+        for (const entry of stream.messages) {
+          const li = document.createElement("li");
+          li.className = "mono";
+          li.textContent = `[${entry.t}] ${entry.text}`;
+          list.appendChild(li);
+        }
+      }
+
+      box.appendChild(list);
+      card.appendChild(box);
+      root.appendChild(card);
+    }
+  }
+
+  function pushMonitorMessage(topicName, msg) {
+    const stream = state.monitor.active.get(topicName);
+    if (!stream) {
+      return;
+    }
+    stream.messages.unshift({
+      t: new Date().toLocaleTimeString(),
+      text: formatTopicMessage(msg),
+    });
+    stream.messages = stream.messages.slice(0, TOPIC_ECHO_HISTORY_MAX);
+    renderMonitorStreams();
+  }
+
+  async function startEchoTopic(topicName) {
+    if (state.monitor.active.has(topicName)) {
+      return;
+    }
+    if (state.monitor.active.size >= TOPIC_ECHO_MAX_ACTIVE) {
+      showError(`Topic Echo limit reached (${TOPIC_ECHO_MAX_ACTIVE} active). Stop one before starting another.`);
+      return;
+    }
+
+    const messageType = await ensureTopicType(topicName);
+    if (!messageType) {
+      showError(`Unable to determine message type for ${topicName}`);
+      return;
+    }
+
+    const ok = withRosClient((client) =>
+      client.subscribeTopic(topicName, messageType, (msg) => {
+        pushMonitorMessage(topicName, msg);
+      })
+    );
+    if (ok !== true) {
+      return;
+    }
+
+    state.monitor.active.set(topicName, { messageType, messages: [] });
+    renderMonitorActiveCount();
+    renderMonitorStreams();
+    addUiEvent(`Started echo for ${topicName}`, "log");
+    clearError();
+  }
+
+  function stopEchoTopic(topicName, logEvent) {
+    if (!state.monitor.active.has(topicName)) {
+      return;
+    }
+
+    withRosClient((client) => client.unsubscribeTopic(topicName));
+    state.monitor.active.delete(topicName);
+    renderMonitorActiveCount();
+    renderMonitorStreams();
+
+    if (logEvent) {
+      addUiEvent(`Stopped echo for ${topicName}`, "log");
+    }
+  }
+
+  async function startSelectedEchoTopics() {
+    const select = byId("monitor-topic-select");
+    if (!select) {
+      return;
+    }
+    const topics = Array.from(select.selectedOptions).map((opt) => opt.value);
+    if (!topics.length) {
+      showError("Select one or more topics to start echo.");
+      return;
+    }
+
+    clearError();
+    for (const topicName of topics) {
+      if (state.monitor.active.size >= TOPIC_ECHO_MAX_ACTIVE && !state.monitor.active.has(topicName)) {
+        showError(`Topic Echo limit reached (${TOPIC_ECHO_MAX_ACTIVE} active).`);
+        break;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await startEchoTopic(topicName);
+    }
+  }
+
+  function stopSelectedEchoTopics() {
+    const select = byId("monitor-topic-select");
+    if (!select) {
+      return;
+    }
+    const topics = Array.from(select.selectedOptions).map((opt) => opt.value);
+    if (!topics.length) {
+      showError("Select one or more topics to stop echo.");
+      return;
+    }
+
+    clearError();
+    for (const topicName of topics) {
+      stopEchoTopic(topicName, true);
+    }
+  }
+
+  async function refreshExplore() {
+    clearError();
+    addUiEvent("Refreshing nodes/topics/services via rosapi...", "log");
+
+    const [nodes, topics, services] = await Promise.all([
+      rosCallList("getNodes"),
+      rosCallList("getTopics"),
+      rosCallList("getServices"),
+    ]);
+
+    state.graph.nodes = Array.isArray(nodes) ? nodes : [];
+    state.graph.topics = Array.isArray(topics) ? topics : [];
+    state.graph.services = Array.isArray(services) ? services : [];
+
+    renderGraphLists();
+    renderMonitorTopicOptions();
+    addUiEvent(
+      `Explore refresh complete: ${state.graph.nodes.length} nodes, ${state.graph.topics.length} topics, ${state.graph.services.length} services`,
+      "log"
+    );
+  }
+
   async function onSendTopic() {
     if (!state.selected || state.selected.kind !== "topic") {
       showError("Select a topic in Explore first.");
       return;
     }
+
     const topicName = state.selected.name;
-    const typeField = String((byId("interact-topic-type") && byId("interact-topic-type").value) || "").trim();
+    const typeField = String(byId("interact-topic-type")?.value || "").trim();
     const messageType = typeField && !typeField.startsWith("(") ? typeField : await ensureTopicType(topicName);
     if (!messageType) {
       showError("Topic message type is unknown; cannot publish.");
@@ -742,15 +1208,18 @@
 
     let payload;
     try {
-      payload = JSON.parse(String(byId("topic-payload-input").value || "{}"));
+      payload = JSON.parse(String(byId("topic-payload-input")?.value || "{}"));
     } catch (err) {
       showError(`Invalid topic payload JSON: ${err.message || err}`);
       return;
     }
 
     const ok = withRosClient((client) => client.publishTopic(topicName, messageType, payload));
-    if (ok) {
-      text("interact-topic-result", `Published to ${topicName} (${messageType}) at ${new Date().toLocaleTimeString()}\n${prettyJson(payload)}`);
+    if (ok === true) {
+      text(
+        "interact-topic-result",
+        `Published to ${topicName} (${messageType}) at ${new Date().toLocaleTimeString()}\n${prettyJson(payload)}`
+      );
       addUiEvent(`Published topic ${topicName}`, "log");
       clearError();
     }
@@ -761,8 +1230,9 @@
       showError("Select a service in Explore first.");
       return;
     }
+
     const serviceName = state.selected.name;
-    const typeField = String((byId("interact-service-type") && byId("interact-service-type").value) || "").trim();
+    const typeField = String(byId("interact-service-type")?.value || "").trim();
     const serviceType = typeField && !typeField.startsWith("(") ? typeField : await ensureServiceType(serviceName);
     if (!serviceType) {
       showError("Service type is unknown; cannot call service.");
@@ -771,7 +1241,7 @@
 
     let requestObj;
     try {
-      requestObj = JSON.parse(String(byId("service-request-input").value || "{}"));
+      requestObj = JSON.parse(String(byId("service-request-input")?.value || "{}"));
     } catch (err) {
       showError(`Invalid service request JSON: ${err.message || err}`);
       return;
@@ -795,6 +1265,7 @@
         renderConnectionFromPayload(payload);
       });
     }
+
     if (typeof client.setErrorCallback === "function") {
       client.setErrorCallback((message) => {
         if (String(message || "").trim()) {
@@ -802,11 +1273,13 @@
         }
       });
     }
+
     if (typeof client.setDebugCallback === "function") {
       client.setDebugCallback((message) => {
         addUiEvent(String(message || ""));
       });
     }
+
     if (typeof client.subscribeStatus === "function") {
       client.subscribeStatus((statusText) => {
         pushStatus(String(statusText || ""));
@@ -815,19 +1288,82 @@
   }
 
   function attachTopBarHandlers() {
-    byId("connect-btn")?.addEventListener("click", () => {
-      const url = String(byId("ws-url")?.value || "ws://localhost:9090").trim() || "ws://localhost:9090";
-      addUiEvent(`Connect clicked (${url})`, "log");
-      clearError();
-      withRosClient((client) => client.connect(url));
-    });
+    const elements = getConnectionElements();
+    if (!elements) {
+      return;
+    }
 
-    byId("disconnect-btn")?.addEventListener("click", () => {
-      addUiEvent("Disconnect clicked", "log");
-      withRosClient((client) => client.disconnect());
+    elements.toggle.addEventListener("click", () => {
+      console.log("[UI] connect-toggle clicked", {
+        wsUrl: String(elements.wsUrl.value || ""),
+        hasRosClient: !!window.rosClient,
+      });
+
+      try {
+        const phase = state.connection.phase;
+        const connected = state.connection.connected;
+
+        if (phase === "connecting") {
+          return;
+        }
+
+        if (connected) {
+          addUiEvent("Disconnect clicked", "log");
+          withRosClient((client) => client.disconnect());
+          return;
+        }
+
+        const url = String(elements.wsUrl.value || "ws://localhost:9090").trim() || "ws://localhost:9090";
+        addUiEvent(`Connect clicked (${url})`, "log");
+        clearError();
+        withRosClient((client) => client.connect(url));
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        console.error("[UI] connect-toggle handler exception", err);
+        showError(`[UI] connect-toggle exception: ${msg}`);
+      }
     });
+    console.log("[UI] connect-toggle handler attached", elements.toggle);
 
     byId("details-toggle-btn")?.addEventListener("click", () => openDetails());
+  }
+
+  function installGlobalErrorHandlers() {
+    const previousOnError = window.onerror;
+    window.onerror = function onWindowError(message, source, lineno, colno, error) {
+      const msg = String(message || (error && error.message) || "Unknown window error");
+      console.error("[UI] window.onerror", { message, source, lineno, colno, error });
+      showError(`[window.onerror] ${msg}`);
+      addUiEvent(`window.onerror: ${msg}`, "error");
+      if (typeof previousOnError === "function") {
+        try {
+          return previousOnError.apply(this, arguments);
+        } catch (prevErr) {
+          console.error("[UI] previous window.onerror failed", prevErr);
+        }
+      }
+      return false;
+    };
+
+    const previousUnhandled = window.onunhandledrejection;
+    window.onunhandledrejection = function onUnhandledRejection(event) {
+      const reason = event && event.reason;
+      const msg =
+        (reason && reason.message) ||
+        (typeof reason === "string" ? reason : "") ||
+        "Unhandled promise rejection";
+      console.error("[UI] window.onunhandledrejection", event);
+      showError(`[unhandledrejection] ${msg}`);
+      addUiEvent(`unhandledrejection: ${msg}`, "error");
+      if (typeof previousUnhandled === "function") {
+        try {
+          return previousUnhandled.call(this, event);
+        } catch (prevErr) {
+          console.error("[UI] previous window.onunhandledrejection failed", prevErr);
+        }
+      }
+      return false;
+    };
   }
 
   function attachTabHandlers() {
@@ -842,14 +1378,58 @@
         showError(`Explore refresh failed: ${err.message || err}`);
       });
     });
+
+    byId("explore-filter-input")?.addEventListener("input", (event) => {
+      state.filterText = String(event.target.value || "");
+      renderGraphLists();
+    });
+
+    byId("services-node-only-toggle")?.addEventListener("change", (event) => {
+      state.servicesNodeOnly = !!event.target.checked;
+      if (state.servicesNodeOnly && state.selected && state.selected.kind === "node" && !detailsCacheGet("node", state.selected.name)) {
+        loadSelectedDetails()
+          .catch((err) => {
+            showError(`Node details lookup failed: ${err.message || err}`);
+          })
+          .finally(() => {
+            renderGraphLists();
+          });
+        return;
+      }
+      renderGraphLists();
+    });
   }
 
   function attachInteractHandlers() {
+    byId("topic-template-select")?.addEventListener("change", () => {
+      updateTopicTemplatePreview();
+    });
+
+    byId("topic-template-insert-btn")?.addEventListener("click", () => {
+      const selectedType = String(byId("topic-template-select")?.value || "std_msgs/String");
+      inputValue("topic-payload-input", prettyJson(getTopicTemplate(selectedType)));
+      addUiEvent(`Inserted template for ${selectedType}`, "log");
+    });
+
+    byId("topic-template-copy-btn")?.addEventListener("click", () => {
+      const selectedType = String(byId("topic-template-select")?.value || "std_msgs/String");
+      const payloadText = prettyJson(getTopicTemplate(selectedType));
+      copyText(payloadText)
+        .then(() => {
+          addUiEvent(`Copied template for ${selectedType}`, "log");
+          clearError();
+        })
+        .catch((err) => {
+          showError(`Copy failed: ${err.message || err}`);
+        });
+    });
+
     byId("topic-send-btn")?.addEventListener("click", () => {
       onSendTopic().catch((err) => {
         showError(`Publish failed: ${err.message || err}`);
       });
     });
+
     byId("service-call-btn")?.addEventListener("click", () => {
       onCallService().catch((err) => {
         showError(`Service call failed: ${err.message || err}`);
@@ -858,6 +1438,58 @@
   }
 
   function attachRunHandlers() {
+    byId("run-launch-ui-btn")?.addEventListener("click", () => {
+      runEduCommand("launch_ui_backend", "", { isLaunch: true }).catch((err) => {
+        showError(`Launch UI Backend failed: ${err.message || err}`);
+      });
+    });
+
+    byId("run-launch-instrument-btn")?.addEventListener("click", () => {
+      runEduCommand("launch_instrument", "", { isLaunch: true }).catch((err) => {
+        showError(`Launch Instrument failed: ${err.message || err}`);
+      });
+    });
+
+    byId("run-list-nodes-btn")?.addEventListener("click", () => {
+      runEduCommand("list_nodes", "").catch((err) => {
+        showError(`List Nodes failed: ${err.message || err}`);
+      });
+    });
+
+    byId("run-list-topics-btn")?.addEventListener("click", () => {
+      runEduCommand("list_topics", "").catch((err) => {
+        showError(`List Topics failed: ${err.message || err}`);
+      });
+    });
+
+    byId("run-list-services-btn")?.addEventListener("click", () => {
+      runEduCommand("list_services", "").catch((err) => {
+        showError(`List Services failed: ${err.message || err}`);
+      });
+    });
+
+    byId("run-topic-info-btn")?.addEventListener("click", () => {
+      const topicName = getSelectedTopicName();
+      if (!topicName) {
+        showError("Select a topic in Explore to use Topic Tools.");
+        return;
+      }
+      runEduCommand(`topic_info:${topicName}`, "").catch((err) => {
+        showError(`Topic Info failed: ${err.message || err}`);
+      });
+    });
+
+    byId("run-topic-hz-btn")?.addEventListener("click", () => {
+      const topicName = getSelectedTopicName();
+      if (!topicName) {
+        showError("Select a topic in Explore to use Topic Tools.");
+        return;
+      }
+      runEduCommand(`topic_hz:${topicName}`, "").catch((err) => {
+        showError(`Topic Hz failed: ${err.message || err}`);
+      });
+    });
+
     document.querySelectorAll(".copy-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         const value = btn.dataset.copy || "";
@@ -873,28 +1505,15 @@
     });
   }
 
-  function attachLogHandlers() {
-    byId("logs-sub-rosout-btn")?.addEventListener("click", () => {
-      state.rosLogs = [];
-      state.logsSourceText = "Log source: /rosout (rcl_interfaces/Log)";
-      renderRosLogs();
-      withRosClient((client) => client.subscribeLogTopic("/rosout", "rcl_interfaces/Log", (line) => pushRosLog(line)));
-      addUiEvent("Subscribed to /rosout", "log");
+  function attachMonitorHandlers() {
+    byId("monitor-start-btn")?.addEventListener("click", () => {
+      startSelectedEchoTopics().catch((err) => {
+        showError(`Start echo failed: ${err.message || err}`);
+      });
     });
 
-    byId("logs-sub-ui-btn")?.addEventListener("click", () => {
-      state.rosLogs = [];
-      state.logsSourceText = "Log source: /ui/log (std_msgs/String)";
-      renderRosLogs();
-      withRosClient((client) => client.subscribeLogTopic("/ui/log", "std_msgs/String", (line) => pushRosLog(line)));
-      addUiEvent("Subscribed to /ui/log", "log");
-    });
-
-    byId("logs-unsub-btn")?.addEventListener("click", () => {
-      withRosClient((client) => client.unsubscribeLogTopic());
-      state.logsSourceText = "Log source: none";
-      renderRosLogs();
-      addUiEvent("Stopped log subscription", "log");
+    byId("monitor-stop-btn")?.addEventListener("click", () => {
+      stopSelectedEchoTopics();
     });
   }
 
@@ -904,20 +1523,25 @@
     text("conn-text", "Disconnected");
     text("selected-summary", "None");
     text("status-latest", "(no messages yet)");
+    inputValue("explore-filter-input", "");
     renderStatusHistory();
-    renderRosLogs();
     renderUiEventLog();
-    renderExploreCounts();
     renderDetailsPanel(null);
+    renderGraphLists();
+    renderMonitorTopicOptions();
+    renderMonitorActiveCount();
+    renderMonitorStreams();
     renderInteractTab();
+    renderRunTopicTools();
+    updateTopicTemplatePreview();
+    text("run-cli-preview", "(none yet)");
+    text("run-command-output", "(no command run yet)");
+    setRunLaunchIndicator(false, "Running...");
+    updateConnectionToggle();
     openDetails(false);
-    renderList("nodes-list", [], "node");
-    renderList("topics-list", [], "topic");
-    renderList("services-list", [], "service");
   }
 
   function bootstrap() {
-    console.log("[UI] handlers attached");
     setJsStatus("JS handlers attached");
 
     try {
@@ -948,13 +1572,16 @@
     attachExploreHandlers();
     attachInteractHandlers();
     attachRunHandlers();
-    attachLogHandlers();
+    attachMonitorHandlers();
 
     addUiEvent("JS handlers attached", "log");
     setActiveTab("explore");
   }
 
   document.addEventListener("DOMContentLoaded", () => {
+    window.__uiHandlersAttached = true;
+    console.log("[UI] handlers attached");
+    installGlobalErrorHandlers();
     renderInitial();
     bootstrap();
   });
